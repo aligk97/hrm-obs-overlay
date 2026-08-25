@@ -1,6 +1,10 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from app import (
+    SessionRecorder,
     Settings,
     estimate_kcal_per_minute,
     heart_zone,
@@ -75,6 +79,37 @@ class HeartRateMeasurementTests(unittest.TestCase):
         self.assertEqual(summary["avg_bpm"], 103.0)
         self.assertEqual(zones["Dinlenme"]["minutes"], 1.0)
         self.assertEqual(zones["Yağ Yakımı"]["minutes"], 2.0)
+
+    def test_session_recorder_persists_finished_recording(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = SessionRecorder(Path(tmp))
+            session = recorder.start_new(Settings())
+            zone = heart_zone(126, 30)
+            recorder.record_sample(
+                bpm=126,
+                elapsed_seconds=0,
+                calories=0.5,
+                kcal_per_hour=300,
+                zone=zone,
+                force_flush=True,
+            )
+            recorder.record_sample(
+                bpm=132,
+                elapsed_seconds=60,
+                calories=8.5,
+                kcal_per_hour=480,
+                zone=heart_zone(132, 30),
+                force_flush=True,
+            )
+            recorder.finish_current(elapsed_seconds=90, calories=11.0)
+
+            self.assertFalse(recorder.is_active())
+            saved_path = Path(tmp) / f"{session['id']}.json"
+            self.assertTrue(saved_path.exists())
+            saved = json.loads(saved_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["ended_at"] is not None, True)
+            self.assertEqual(len(saved["samples"]), 2)
+            self.assertEqual(recorder.list_summaries()[0]["calories"], 11.0)
 
 
 if __name__ == "__main__":

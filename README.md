@@ -45,11 +45,13 @@ Demo modu, OBS ekranini kemer olmadan denemek icindir. Gercek kemer baglantisi i
 
 ## Yayın kayıtları ve raporlar
 
-- Uygulama her acildiginda otomatik yeni bir yayin kaydi baslatir.
+- `Baglan` dugmesine bastiginizda otomatik yeni bir yayin kaydi baslar.
 - Nabiz verisi geldikce kayit dosyasi otomatik guncellenir.
+- Yayini bitirirken `Kaydi durdur` dugmesine basin; kayit kapanir ve eski kayitlar listesine duser.
 - Ayar ekranindaki `Yayin kayitlari` bolumunden eski kayitlara tiklayabilirsiniz.
 - Rapor ekraninda toplam sure, kalori, ortalama/en dusuk/en yuksek nabiz, nabiz grafigi ve bolgelere gore sure dagilimi gorunur.
-- `Sifirla` dugmesi mevcut kaydi kapatir ve yeni bir kayit baslatir.
+- Aktif kayit varken ayar sayfasini kapatmaya calisirsaniz tarayici once `Kaydi durdur` ile kaydetmeniz icin uyarir.
+- `Sifirla` dugmesi aktif kaydi kapatir ve yeni bir kayit baslatir; aktif kayit yoksa sadece ekrandaki sure/kalori sayacini sifirlar.
 
 Kayitlar bilgisayarda su klasorde tutulur ve GitHub'a yuklenmez:
 

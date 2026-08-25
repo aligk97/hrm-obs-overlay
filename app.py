@@ -117,6 +117,7 @@ class RuntimeState:
     calories: float = 0.0
     kcal_per_hour: float = 0.0
     session_started_at: float = field(default_factory=time.monotonic)
+    stopped_elapsed_seconds: float = 0.0
     last_integrated_at: float = field(default_factory=time.monotonic)
     bpm_updated_at: float = 0.0
     connected: bool = False
@@ -383,6 +384,9 @@ class SessionRecorder:
 
     def start_new(self, settings: Settings) -> dict[str, Any]:
         with self.lock:
+            if self.current is not None:
+                return self.current
+
             now = datetime.now().astimezone()
             base_id = now.strftime("%Y%m%d-%H%M%S")
             session_id = base_id
@@ -405,6 +409,10 @@ class SessionRecorder:
             }
             self.flush(force=True)
             return self.current
+
+    def is_active(self) -> bool:
+        with self.lock:
+            return self.current is not None
 
     def update_settings(self, settings: Settings) -> None:
         with self.lock:
@@ -469,10 +477,13 @@ class SessionRecorder:
             self.current["final_calories"] = round(max(0.0, calories), 2)
             self.current["final_elapsed_seconds"] = round(max(0.0, elapsed_seconds), 2)
             self.flush(force=True)
+            self.current = None
+            self.current_path = None
 
     def flush(self, force: bool = False) -> None:
         if self.current is None or self.current_path is None:
             return
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
         now = time.monotonic()
         if not force and (now - self.last_flush_at) < 5.0:
             return
@@ -494,6 +505,7 @@ class SessionRecorder:
 
     def list_summaries(self) -> list[dict[str, Any]]:
         with self.lock:
+            self.sessions_dir.mkdir(parents=True, exist_ok=True)
             summaries_by_id: dict[str, dict[str, Any]] = {}
             for path in self.sessions_dir.glob("*.json"):
                 data = self._load_session_file(path)
@@ -520,6 +532,7 @@ class SessionRecorder:
                 session["summary"] = summarize_session(self.current)
                 return session
 
+            self.sessions_dir.mkdir(parents=True, exist_ok=True)
             path = (self.sessions_dir / f"{safe_id}.json").resolve()
             try:
                 path.relative_to(self.sessions_dir.resolve())
@@ -564,7 +577,6 @@ class HrmApplication:
         self.settings = load_settings()
         self.state = RuntimeState()
         self.recorder = SessionRecorder(SESSIONS_DIR)
-        self.recorder.start_new(self.settings)
         self.ble = BleController(self)
         self.demo = DemoSource(self)
 
@@ -574,13 +586,37 @@ class HrmApplication:
     def shutdown(self) -> None:
         self.demo.stop()
         self.ble.disconnect()
+        self.stop_recording("Kayıt kapatıldı")
+
+    def start_recording(self) -> dict[str, Any]:
         with self.lock:
+            self._integrate_locked()
+            if not self.recorder.is_active():
+                now = time.monotonic()
+                self.state.calories = 0.0
+                self.state.kcal_per_hour = 0.0
+                self.state.session_started_at = now
+                self.state.stopped_elapsed_seconds = 0.0
+                self.state.last_integrated_at = now
+                self.state.status = "Kayıt başladı"
+                self.state.error = ""
+                self.recorder.start_new(self.settings)
+            return summarize_session(self.recorder.current) if self.recorder.current else {}
+
+    def stop_recording(self, status: str = "Kayıt durduruldu") -> None:
+        with self.lock:
+            if not self.recorder.is_active():
+                self.state.status = status if status != "Kayıt durduruldu" else "Aktif kayıt yok"
+                return
             self._integrate_locked()
             elapsed_seconds = time.monotonic() - self.state.session_started_at
             self.recorder.finish_current(
                 elapsed_seconds=elapsed_seconds,
                 calories=self.state.calories,
             )
+            self.state.stopped_elapsed_seconds = elapsed_seconds
+            self.state.status = status
+            self.state.error = ""
 
     def _integrate_locked(self) -> None:
         now = time.monotonic()
@@ -597,8 +633,9 @@ class HrmApplication:
         )
         if bpm_is_fresh:
             kcal_per_minute = estimate_kcal_per_minute(self.state.bpm, self.settings)
-            self.state.calories += kcal_per_minute * (elapsed / 60.0)
             self.state.kcal_per_hour = kcal_per_minute * 60.0
+            if self.recorder.is_active():
+                self.state.calories += kcal_per_minute * (elapsed / 60.0)
         else:
             self.state.kcal_per_hour = 0.0
 
@@ -618,18 +655,22 @@ class HrmApplication:
         with self.lock:
             self._integrate_locked()
             now = time.monotonic()
-            elapsed_seconds = now - self.state.session_started_at
-            self.recorder.finish_current(
-                elapsed_seconds=elapsed_seconds,
-                calories=self.state.calories,
-            )
+            was_recording = self.recorder.is_active()
+            if was_recording:
+                elapsed_seconds = now - self.state.session_started_at
+                self.recorder.finish_current(
+                    elapsed_seconds=elapsed_seconds,
+                    calories=self.state.calories,
+                )
             self.state.calories = 0.0
             self.state.kcal_per_hour = 0.0
             self.state.session_started_at = now
+            self.state.stopped_elapsed_seconds = 0.0
             self.state.last_integrated_at = now
             self.state.status = "Seans sifirlandi"
             self.state.error = ""
-            self.recorder.start_new(self.settings)
+            if was_recording:
+                self.recorder.start_new(self.settings)
 
     def set_status(self, status: str, error: str = "") -> None:
         with self.lock:
@@ -688,6 +729,7 @@ class HrmApplication:
                 calories=self.state.calories,
                 kcal_per_hour=self.state.kcal_per_hour,
                 zone=zone,
+                force_flush=True,
             )
 
     def set_demo(self, enabled: bool) -> None:
@@ -710,7 +752,12 @@ class HrmApplication:
             now = time.monotonic()
             bpm_fresh = self.state.bpm is not None and (now - self.state.bpm_updated_at) <= 12.0
             visible_bpm = self.state.bpm if bpm_fresh else None
-            elapsed_seconds = now - self.state.session_started_at
+            recording_active = self.recorder.is_active()
+            elapsed_seconds = (
+                now - self.state.session_started_at
+                if recording_active
+                else self.state.stopped_elapsed_seconds
+            )
             zone = heart_zone(visible_bpm, self.settings.age)
             return {
                 "settings": asdict(self.settings),
@@ -733,6 +780,7 @@ class HrmApplication:
                 "status": self.state.status,
                 "error": self.state.error,
                 "zone": zone,
+                "recording_active": recording_active,
                 "active_session": summarize_session(self.recorder.current)
                 if self.recorder.current
                 else None,
@@ -1017,13 +1065,39 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
             name = str(payload.get("name") or self.server.app.settings.device_name or "").strip()
             if address or name:
                 self.server.app.update_settings({"device_address": address, "device_name": name})
+            active_session = self.server.app.start_recording()
             self.server.app.ble.connect_background(address, name)
-            self._send_json({"ok": True, "status": "Baglanti baslatildi"})
+            self._send_json(
+                {
+                    "ok": True,
+                    "status": "Baglanti baslatildi",
+                    "active_session": active_session,
+                }
+            )
             return
         if path == "/api/disconnect":
             self.server.app.demo.stop()
             self.server.app.ble.disconnect()
-            self._send_json({"ok": True})
+            self._send_json(
+                {
+                    "ok": True,
+                    "recording_active": self.server.app.recorder.is_active(),
+                }
+            )
+            return
+        if path == "/api/recording/start":
+            active_session = self.server.app.start_recording()
+            self._send_json({"ok": True, "active_session": active_session})
+            return
+        if path == "/api/recording/stop":
+            self.server.app.stop_recording()
+            self._send_json(
+                {
+                    "ok": True,
+                    "recording_active": self.server.app.recorder.is_active(),
+                    "sessions": self.server.app.recorder.list_summaries(),
+                }
+            )
             return
         if path == "/api/reset":
             self.server.app.reset_session()
@@ -1033,6 +1107,7 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
             enabled = bool(payload.get("enabled"))
             if enabled:
                 self.server.app.ble.disconnect()
+                self.server.app.start_recording()
                 self.server.app.demo.start()
             else:
                 self.server.app.demo.stop()

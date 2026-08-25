@@ -205,19 +205,39 @@ button.primary {
   font-weight: 700;
 }
 
+button.recording-action {
+  background: rgba(244, 201, 93, 0.16);
+  border-color: rgba(244, 201, 93, 0.5);
+  color: #ffe8a3;
+  font-weight: 800;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .button-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   margin: 14px 0;
 }
 
 .note,
 .error,
-.url-box {
+.url-box,
+.recording-warning {
   border-radius: 8px;
   padding: 12px;
   background: rgba(255, 255, 255, 0.06);
+}
+
+.recording-warning {
+  margin-bottom: 10px;
+  color: #ffe8a3;
+  background: rgba(244, 201, 93, 0.14);
+  border: 1px solid rgba(244, 201, 93, 0.34);
 }
 
 .error {

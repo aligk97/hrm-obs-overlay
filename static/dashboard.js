@@ -10,10 +10,13 @@ const overlayUrl = $("#overlayUrl");
 const sessionList = $("#sessionList");
 const reportEmpty = $("#reportEmpty");
 const reportContent = $("#reportContent");
+const recordingWarning = $("#recordingWarning");
+const stopRecordingButton = $("#stopRecordingButton");
 const history = [];
 const maxHistory = 90;
 let settingsHydrated = false;
 let selectedSessionId = "";
+let activeRecording = false;
 
 function formatKcalHour(value) {
   return `${Number(value || 0).toFixed(0)} kcal/saat`;
@@ -101,6 +104,9 @@ function renderState(state) {
   $("#kcalHourValue").textContent = formatKcalHour(state.kcal_per_hour);
   statusText.textContent = state.error ? `${state.status}: ${state.error}` : state.status;
   setError(state.error || "");
+  activeRecording = Boolean(state.recording_active);
+  recordingWarning.hidden = !activeRecording;
+  stopRecordingButton.disabled = !activeRecording;
 
   connectionPill.classList.toggle("connected", Boolean(state.connected));
   connectionPill.classList.toggle("connecting", Boolean(state.connecting));
@@ -224,7 +230,15 @@ function renderSessionList(sessions) {
 async function loadSessions({ refreshSelected = false } = {}) {
   const data = await request("/api/sessions");
   const sessions = data.sessions || [];
-  if (!selectedSessionId && sessions.length) selectedSessionId = sessions[0].id;
+  const selectedStillExists = sessions.some((session) => session.id === selectedSessionId);
+  if (!sessions.length) {
+    selectedSessionId = "";
+    renderSessionList(sessions);
+    reportEmpty.hidden = false;
+    reportContent.hidden = true;
+    return;
+  }
+  if (!selectedSessionId || !selectedStillExists) selectedSessionId = sessions[0].id;
   renderSessionList(sessions);
 
   if (selectedSessionId && (refreshSelected || !reportContent || reportContent.hidden)) {
@@ -396,7 +410,8 @@ $("#connectButton").addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify(selectedDevice()),
     });
-    statusText.textContent = "Bağlantı başlatıldı";
+    statusText.textContent = "Bağlantı ve kayıt başlatıldı";
+    await loadSessions({ refreshSelected: true });
   } catch (error) {
     setError(error.message);
   }
@@ -413,6 +428,20 @@ $("#disconnectButton").addEventListener("click", async () => {
 $("#demoButton").addEventListener("click", async () => {
   try {
     await request("/api/demo", { method: "POST", body: JSON.stringify({ enabled: true }) });
+    await loadSessions({ refreshSelected: true });
+  } catch (error) {
+    setError(error.message);
+  }
+});
+
+stopRecordingButton.addEventListener("click", async () => {
+  try {
+    await request("/api/recording/stop", { method: "POST", body: "{}" });
+    activeRecording = false;
+    recordingWarning.hidden = true;
+    stopRecordingButton.disabled = true;
+    statusText.textContent = "Kayıt kaydedildi ve durduruldu";
+    await loadSessions({ refreshSelected: true });
   } catch (error) {
     setError(error.message);
   }
@@ -455,6 +484,12 @@ request("/api/state")
 
 loadSessions().catch((error) => setError(error.message));
 setInterval(() => loadSessions({ refreshSelected: true }).catch(() => {}), 15000);
+
+window.addEventListener("beforeunload", (event) => {
+  if (!activeRecording) return;
+  event.preventDefault();
+  event.returnValue = "Aktif yayın kaydı var. Önce Kaydı durdur ile kaydedin.";
+});
 
 const events = new EventSource("/events");
 events.addEventListener("state", (event) => renderState(JSON.parse(event.data)));
