@@ -106,6 +106,55 @@
           <div class="url-box" id="overlayUrl">http://localhost:8765/overlay</div>
           <canvas id="pulseChart" width="900" height="160" aria-label="Nabız grafiği"></canvas>
         </section>
+
+        <section class="panel wide reports-panel">
+          <div class="panel-head">
+            <h2>Yayın kayıtları</h2>
+            <button id="refreshSessionsButton" type="button">Yenile</button>
+          </div>
+
+          <div class="reports-layout">
+            <div class="session-list" id="sessionList"></div>
+
+            <section class="report-detail">
+              <div class="report-empty" id="reportEmpty">Kayıt seçin</div>
+              <div class="report-content" id="reportContent" hidden>
+                <div class="report-title-row">
+                  <div>
+                    <h3 id="reportTitle">Yayın Kaydı</h3>
+                    <p id="reportMeta">--</p>
+                  </div>
+                  <div class="report-kcal">
+                    <span>Kalori</span>
+                    <strong id="reportCalories">0.0</strong>
+                  </div>
+                </div>
+
+                <div class="report-summary-grid">
+                  <div>
+                    <span>Süre</span>
+                    <strong id="reportDuration">00:00</strong>
+                  </div>
+                  <div>
+                    <span>Ortalama</span>
+                    <strong id="reportAvgBpm">-- bpm</strong>
+                  </div>
+                  <div>
+                    <span>En düşük</span>
+                    <strong id="reportMinBpm">-- bpm</strong>
+                  </div>
+                  <div>
+                    <span>En yüksek</span>
+                    <strong id="reportMaxBpm">-- bpm</strong>
+                  </div>
+                </div>
+
+                <canvas id="reportHeartChart" width="760" height="220" aria-label="Yayın nabız grafiği"></canvas>
+                <div class="zone-breakdown" id="zoneBreakdown"></div>
+              </div>
+            </section>
+          </div>
+        </section>
       </section>
     </main>
 

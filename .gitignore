@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 
 settings.json
+data/
 
 .pytest_cache/
 .mypy_cache/

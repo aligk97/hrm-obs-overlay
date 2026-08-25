@@ -9,6 +9,7 @@ Windows 11'de Decathlon Bluetooth/ANT+ nabiz kemerini Bluetooth Low Energy uzeri
 - Boy, kilo, yas ve cinsiyet ayarlarini kaydeder.
 - Nabiz, sure ve kullanici bilgilerine gore tahmini kalori yakimini canli hesaplar.
 - Nabiz bolgesine gore renk degistirir: dinlenme acik mavi, isinma turkuaz, yag yakimi sari, aerobik turuncu, anaerobik koyu turuncu, maksimum koyu kirmizi.
+- Her yayin icin otomatik kayit tutar ve eski kayitlari rapor olarak gosterir.
 - Kemer yaninizda degilken test etmek icin demo modu vardir.
 
 ## Kurulum
@@ -41,6 +42,20 @@ py -3.14 -m venv .venv
 6. Nabiz degeri gelince kalori ve sure otomatik akar.
 
 Demo modu, OBS ekranini kemer olmadan denemek icindir. Gercek kemer baglantisi icin demo aciksa `Kes` dugmesine basin veya dogrudan `Baglan` dugmesini kullanin.
+
+## Yayın kayıtları ve raporlar
+
+- Uygulama her acildiginda otomatik yeni bir yayin kaydi baslatir.
+- Nabiz verisi geldikce kayit dosyasi otomatik guncellenir.
+- Ayar ekranindaki `Yayin kayitlari` bolumunden eski kayitlara tiklayabilirsiniz.
+- Rapor ekraninda toplam sure, kalori, ortalama/en dusuk/en yuksek nabiz, nabiz grafigi ve bolgelere gore sure dagilimi gorunur.
+- `Sifirla` dugmesi mevcut kaydi kapatir ve yeni bir kayit baslatir.
+
+Kayitlar bilgisayarda su klasorde tutulur ve GitHub'a yuklenmez:
+
+```text
+data/sessions/
+```
 
 ## OBS Browser Source
 

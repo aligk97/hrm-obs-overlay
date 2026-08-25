@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -18,9 +19,83 @@ from urllib.parse import parse_qs, urlparse
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 SETTINGS_PATH = APP_DIR / "settings.json"
+SESSIONS_DIR = APP_DIR / "data" / "sessions"
 
 HR_SERVICE_UUID = "0000180d-0000-1000-8000-00805f9b34fb"
 HR_CHAR_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
+
+HEART_ZONE_DEFS = [
+    {
+        "label": "Dinlenme",
+        "subtitle": "Rahat ritim",
+        "range": "<50%",
+        "level": 1,
+        "min_pct": 0.0,
+        "max_pct": 50.0,
+        "color": "#7ddaff",
+        "soft": "rgba(125, 218, 255, 0.24)",
+    },
+    {
+        "label": "Isınma",
+        "subtitle": "Tempo başlıyor",
+        "range": "50-60%",
+        "level": 2,
+        "min_pct": 50.0,
+        "max_pct": 60.0,
+        "color": "#5eead4",
+        "soft": "rgba(94, 234, 212, 0.24)",
+    },
+    {
+        "label": "Yağ Yakımı",
+        "subtitle": "Uzun tempo",
+        "range": "60-70%",
+        "level": 3,
+        "min_pct": 60.0,
+        "max_pct": 70.0,
+        "color": "#f4d35e",
+        "soft": "rgba(244, 211, 94, 0.28)",
+    },
+    {
+        "label": "Aerobik",
+        "subtitle": "Aerobik tempo",
+        "range": "70-80%",
+        "level": 4,
+        "min_pct": 70.0,
+        "max_pct": 80.0,
+        "color": "#f59e42",
+        "soft": "rgba(245, 158, 66, 0.28)",
+    },
+    {
+        "label": "Anaerobik",
+        "subtitle": "Yüksek güç",
+        "range": "80-90%",
+        "level": 5,
+        "min_pct": 80.0,
+        "max_pct": 90.0,
+        "color": "#e85d04",
+        "soft": "rgba(232, 93, 4, 0.3)",
+    },
+    {
+        "label": "Maksimum",
+        "subtitle": "Limit bölgesi",
+        "range": "90%+",
+        "level": 6,
+        "min_pct": 90.0,
+        "max_pct": 120.0,
+        "color": "#8b0000",
+        "soft": "rgba(139, 0, 0, 0.32)",
+    },
+]
+
+WAITING_ZONE = {
+    "label": "Bekleniyor",
+    "subtitle": "Nabız aranıyor",
+    "range": "",
+    "pct": 0,
+    "level": 0,
+    "color": "#7ddaff",
+    "soft": "rgba(125, 218, 255, 0.22)",
+}
 
 
 @dataclass
@@ -197,81 +272,264 @@ def estimate_kcal_per_minute(bpm: int | None, settings: Settings) -> float:
 
 def heart_zone(bpm: int | None, age: int) -> dict[str, Any]:
     if bpm is None:
-        return {
-            "label": "Bekleniyor",
-            "subtitle": "Nabız aranıyor",
-            "range": "",
-            "pct": 0,
-            "level": 0,
-            "color": "#7ddaff",
-            "soft": "rgba(125, 218, 255, 0.22)",
-        }
+        return dict(WAITING_ZONE)
 
     max_hr = max(100.0, 208.0 - (0.7 * age))
     pct = _clamp((bpm / max_hr) * 100.0, 0.0, 120.0)
-    if pct < 50:
-        label, subtitle, zone_range, level, color, soft = (
-            "Dinlenme",
-            "Rahat ritim",
-            "<50%",
-            1,
-            "#7ddaff",
-            "rgba(125, 218, 255, 0.24)",
-        )
-    elif pct < 60:
-        label, subtitle, zone_range, level, color, soft = (
-            "Isınma",
-            "Tempo başlıyor",
-            "50-60%",
-            2,
-            "#5eead4",
-            "rgba(94, 234, 212, 0.24)",
-        )
-    elif pct < 70:
-        label, subtitle, zone_range, level, color, soft = (
-            "Yağ Yakımı",
-            "Uzun tempo",
-            "60-70%",
-            3,
-            "#f4d35e",
-            "rgba(244, 211, 94, 0.28)",
-        )
-    elif pct < 80:
-        label, subtitle, zone_range, level, color, soft = (
-            "Aerobik",
-            "Aerobik tempo",
-            "70-80%",
-            4,
-            "#f59e42",
-            "rgba(245, 158, 66, 0.28)",
-        )
-    elif pct < 90:
-        label, subtitle, zone_range, level, color, soft = (
-            "Anaerobik",
-            "Yüksek güç",
-            "80-90%",
-            5,
-            "#e85d04",
-            "rgba(232, 93, 4, 0.3)",
-        )
-    else:
-        label, subtitle, zone_range, level, color, soft = (
-            "Maksimum",
-            "Limit bölgesi",
-            "90%+",
-            6,
-            "#8b0000",
-            "rgba(139, 0, 0, 0.32)",
-        )
+    selected = HEART_ZONE_DEFS[-1]
+    for zone in HEART_ZONE_DEFS:
+        if pct < zone["max_pct"]:
+            selected = zone
+            break
+
     return {
-        "label": label,
-        "subtitle": subtitle,
-        "range": zone_range,
+        "label": selected["label"],
+        "subtitle": selected["subtitle"],
+        "range": selected["range"],
         "pct": round(pct, 1),
-        "level": level,
-        "color": color,
-        "soft": soft,
+        "level": selected["level"],
+        "color": selected["color"],
+        "soft": selected["soft"],
     }
+
+
+def recording_settings(settings: Settings) -> dict[str, Any]:
+    return {
+        "display_name": settings.display_name,
+        "height_cm": settings.height_cm,
+        "weight_kg": settings.weight_kg,
+        "age": settings.age,
+        "sex": settings.sex,
+    }
+
+
+def local_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def summarize_session(session: dict[str, Any]) -> dict[str, Any]:
+    samples = [sample for sample in session.get("samples", []) if sample.get("bpm") is not None]
+    zone_seconds = {int(zone["level"]): 0.0 for zone in HEART_ZONE_DEFS}
+
+    bpms: list[int] = []
+    for sample in samples:
+        bpm = _coerce_int(sample.get("bpm"), 0)
+        if bpm > 0:
+            bpms.append(bpm)
+        zone = sample.get("zone") if isinstance(sample.get("zone"), dict) else {}
+        level = int(zone.get("level") or 0)
+        if level in zone_seconds:
+            zone_seconds[level] += max(0.0, _coerce_float(sample.get("duration_seconds"), 0.0))
+
+    if samples:
+        last_sample = samples[-1]
+        duration_seconds = int(
+            max(
+                0.0,
+                _coerce_float(last_sample.get("elapsed_seconds"), 0.0)
+                + _coerce_float(last_sample.get("duration_seconds"), 0.0),
+            )
+        )
+        calories = _coerce_float(session.get("final_calories"), _coerce_float(last_sample.get("calories"), 0.0))
+    else:
+        duration_seconds = int(max(0.0, _coerce_float(session.get("final_elapsed_seconds"), 0.0)))
+        calories = _coerce_float(session.get("final_calories"), 0.0)
+
+    measured_seconds = sum(zone_seconds.values())
+    zones: list[dict[str, Any]] = []
+    for zone in HEART_ZONE_DEFS:
+        seconds = zone_seconds[int(zone["level"])]
+        zones.append(
+            {
+                "label": zone["label"],
+                "subtitle": zone["subtitle"],
+                "range": zone["range"],
+                "level": zone["level"],
+                "color": zone["color"],
+                "seconds": round(seconds, 1),
+                "minutes": round(seconds / 60.0, 1),
+                "percent": round((seconds / measured_seconds) * 100.0, 1) if measured_seconds else 0.0,
+            }
+        )
+
+    return {
+        "id": session.get("id", ""),
+        "title": session.get("title", "Yayın Kaydı"),
+        "started_at": session.get("started_at", ""),
+        "ended_at": session.get("ended_at"),
+        "active": not bool(session.get("ended_at")),
+        "duration_seconds": duration_seconds,
+        "duration": format_seconds(duration_seconds),
+        "measured_seconds": int(measured_seconds),
+        "measured_duration": format_seconds(measured_seconds),
+        "sample_count": len(samples),
+        "avg_bpm": round(sum(bpms) / len(bpms), 1) if bpms else None,
+        "min_bpm": min(bpms) if bpms else None,
+        "max_bpm": max(bpms) if bpms else None,
+        "calories": round(calories, 1),
+        "zones": zones,
+        "settings": session.get("settings", {}),
+    }
+
+
+class SessionRecorder:
+    def __init__(self, sessions_dir: Path) -> None:
+        self.sessions_dir = sessions_dir
+        self.lock = threading.RLock()
+        self.current: dict[str, Any] | None = None
+        self.current_path: Path | None = None
+        self.last_flush_at = 0.0
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
+
+    def start_new(self, settings: Settings) -> dict[str, Any]:
+        with self.lock:
+            now = datetime.now().astimezone()
+            base_id = now.strftime("%Y%m%d-%H%M%S")
+            session_id = base_id
+            suffix = 1
+            current_path = self.sessions_dir / f"{session_id}.json"
+            while current_path.exists():
+                suffix += 1
+                session_id = f"{base_id}-{suffix}"
+                current_path = self.sessions_dir / f"{session_id}.json"
+            self.current_path = current_path
+            self.current = {
+                "id": session_id,
+                "title": f"Yayın {now.strftime('%d.%m.%Y %H:%M')}",
+                "started_at": now.isoformat(timespec="seconds"),
+                "ended_at": None,
+                "settings": recording_settings(settings),
+                "samples": [],
+                "final_calories": 0.0,
+                "final_elapsed_seconds": 0.0,
+            }
+            self.flush(force=True)
+            return self.current
+
+    def update_settings(self, settings: Settings) -> None:
+        with self.lock:
+            if self.current is None:
+                return
+            self.current["settings"] = recording_settings(settings)
+            self.flush(force=True)
+
+    def record_sample(
+        self,
+        *,
+        bpm: int,
+        elapsed_seconds: float,
+        calories: float,
+        kcal_per_hour: float,
+        zone: dict[str, Any],
+        force_flush: bool = False,
+    ) -> None:
+        with self.lock:
+            if self.current is None:
+                return
+
+            samples = self.current.setdefault("samples", [])
+            if samples:
+                previous = samples[-1]
+                previous_elapsed = _coerce_float(previous.get("elapsed_seconds"), elapsed_seconds)
+                previous["duration_seconds"] = round(_clamp(elapsed_seconds - previous_elapsed, 0.0, 15.0), 2)
+
+            samples.append(
+                {
+                    "timestamp": local_iso(),
+                    "elapsed_seconds": round(max(0.0, elapsed_seconds), 2),
+                    "bpm": int(bpm),
+                    "calories": round(max(0.0, calories), 2),
+                    "kcal_per_hour": round(max(0.0, kcal_per_hour), 1),
+                    "zone": {
+                        "label": zone.get("label"),
+                        "level": zone.get("level"),
+                        "pct": zone.get("pct"),
+                        "color": zone.get("color"),
+                    },
+                    "duration_seconds": 0.0,
+                }
+            )
+            self.current["final_calories"] = round(max(0.0, calories), 2)
+            self.current["final_elapsed_seconds"] = round(max(0.0, elapsed_seconds), 2)
+            self.flush(force=force_flush)
+
+    def finish_current(self, *, elapsed_seconds: float, calories: float) -> None:
+        with self.lock:
+            if self.current is None:
+                return
+
+            samples = self.current.get("samples", [])
+            if samples:
+                last = samples[-1]
+                last_elapsed = _coerce_float(last.get("elapsed_seconds"), elapsed_seconds)
+                if _coerce_float(last.get("duration_seconds"), 0.0) == 0.0:
+                    last["duration_seconds"] = round(_clamp(elapsed_seconds - last_elapsed, 0.0, 15.0), 2)
+
+            self.current["ended_at"] = local_iso()
+            self.current["final_calories"] = round(max(0.0, calories), 2)
+            self.current["final_elapsed_seconds"] = round(max(0.0, elapsed_seconds), 2)
+            self.flush(force=True)
+
+    def flush(self, force: bool = False) -> None:
+        if self.current is None or self.current_path is None:
+            return
+        now = time.monotonic()
+        if not force and (now - self.last_flush_at) < 5.0:
+            return
+
+        tmp_path = self.current_path.with_suffix(".tmp")
+        tmp_path.write_text(
+            json.dumps(self.current, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp_path.replace(self.current_path)
+        self.last_flush_at = now
+
+    def _load_session_file(self, path: Path) -> dict[str, Any] | None:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def list_summaries(self) -> list[dict[str, Any]]:
+        with self.lock:
+            summaries_by_id: dict[str, dict[str, Any]] = {}
+            for path in self.sessions_dir.glob("*.json"):
+                data = self._load_session_file(path)
+                if data:
+                    summaries_by_id[str(data.get("id") or path.stem)] = summarize_session(data)
+
+            if self.current is not None:
+                summaries_by_id[str(self.current.get("id"))] = summarize_session(self.current)
+
+            return sorted(
+                summaries_by_id.values(),
+                key=lambda item: str(item.get("started_at", "")),
+                reverse=True,
+            )
+
+    def get_session(self, session_id: str) -> dict[str, Any] | None:
+        safe_id = "".join(ch for ch in session_id if ch.isdigit() or ch == "-")
+        if not safe_id:
+            return None
+
+        with self.lock:
+            if self.current and self.current.get("id") == safe_id:
+                session = dict(self.current)
+                session["summary"] = summarize_session(self.current)
+                return session
+
+            path = (self.sessions_dir / f"{safe_id}.json").resolve()
+            try:
+                path.relative_to(self.sessions_dir.resolve())
+            except ValueError:
+                return None
+            data = self._load_session_file(path)
+            if not data:
+                return None
+            data["summary"] = summarize_session(data)
+            return data
 
 
 def format_seconds(seconds: float) -> str:
@@ -305,6 +563,8 @@ class HrmApplication:
         self.lock = threading.RLock()
         self.settings = load_settings()
         self.state = RuntimeState()
+        self.recorder = SessionRecorder(SESSIONS_DIR)
+        self.recorder.start_new(self.settings)
         self.ble = BleController(self)
         self.demo = DemoSource(self)
 
@@ -314,6 +574,13 @@ class HrmApplication:
     def shutdown(self) -> None:
         self.demo.stop()
         self.ble.disconnect()
+        with self.lock:
+            self._integrate_locked()
+            elapsed_seconds = time.monotonic() - self.state.session_started_at
+            self.recorder.finish_current(
+                elapsed_seconds=elapsed_seconds,
+                calories=self.state.calories,
+            )
 
     def _integrate_locked(self) -> None:
         now = time.monotonic()
@@ -340,6 +607,7 @@ class HrmApplication:
             self._integrate_locked()
             self.settings = sanitize_settings(data, self.settings)
             save_settings(self.settings)
+            self.recorder.update_settings(self.settings)
             if self.settings.device_name:
                 self.state.device_name = self.settings.device_name
             if self.settings.device_address:
@@ -348,13 +616,20 @@ class HrmApplication:
 
     def reset_session(self) -> None:
         with self.lock:
+            self._integrate_locked()
             now = time.monotonic()
+            elapsed_seconds = now - self.state.session_started_at
+            self.recorder.finish_current(
+                elapsed_seconds=elapsed_seconds,
+                calories=self.state.calories,
+            )
             self.state.calories = 0.0
             self.state.kcal_per_hour = 0.0
             self.state.session_started_at = now
             self.state.last_integrated_at = now
             self.state.status = "Seans sifirlandi"
             self.state.error = ""
+            self.recorder.start_new(self.settings)
 
     def set_status(self, status: str, error: str = "") -> None:
         with self.lock:
@@ -405,6 +680,15 @@ class HrmApplication:
                 self.state.device_address = device_address
             if not self.state.status or self.state.status.startswith("Baglanti"):
                 self.state.status = "Nabiz okunuyor"
+            elapsed_seconds = time.monotonic() - self.state.session_started_at
+            zone = heart_zone(bpm, self.settings.age)
+            self.recorder.record_sample(
+                bpm=bpm,
+                elapsed_seconds=elapsed_seconds,
+                calories=self.state.calories,
+                kcal_per_hour=self.state.kcal_per_hour,
+                zone=zone,
+            )
 
     def set_demo(self, enabled: bool) -> None:
         with self.lock:
@@ -449,6 +733,9 @@ class HrmApplication:
                 "status": self.state.status,
                 "error": self.state.error,
                 "zone": zone,
+                "active_session": summarize_session(self.recorder.current)
+                if self.recorder.current
+                else None,
                 "updated_at": time.time(),
             }
 
@@ -683,6 +970,17 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/settings":
             self._send_json(asdict(self.server.app.settings))
+            return
+        if path == "/api/sessions":
+            self._send_json({"sessions": self.server.app.recorder.list_summaries()})
+            return
+        if path.startswith("/api/sessions/"):
+            session_id = path.removeprefix("/api/sessions/").strip("/")
+            session = self.server.app.recorder.get_session(session_id)
+            if not session:
+                self._send_json({"error": "Kayıt bulunamadı"}, code=404)
+                return
+            self._send_json({"session": session})
             return
         if path == "/api/scan":
             query = parse_qs(parsed.query)

@@ -6,6 +6,7 @@ from app import (
     heart_zone,
     parse_heart_rate_measurement,
     sanitize_settings,
+    summarize_session,
 )
 
 
@@ -41,6 +42,39 @@ class HeartRateMeasurementTests(unittest.TestCase):
         self.assertEqual(heart_zone(145, 30)["label"], "Aerobik")
         self.assertEqual(heart_zone(160, 30)["label"], "Anaerobik")
         self.assertEqual(heart_zone(175, 30)["label"], "Maksimum")
+
+    def test_session_summary_counts_zone_durations(self):
+        session = {
+            "id": "20260825-120000",
+            "title": "Yayın 25.08.2026 12:00",
+            "started_at": "2026-08-25T12:00:00+03:00",
+            "ended_at": "2026-08-25T12:03:00+03:00",
+            "final_calories": 18.5,
+            "samples": [
+                {
+                    "elapsed_seconds": 0,
+                    "bpm": 82,
+                    "calories": 1.0,
+                    "duration_seconds": 60,
+                    "zone": {"level": 1},
+                },
+                {
+                    "elapsed_seconds": 60,
+                    "bpm": 124,
+                    "calories": 8.0,
+                    "duration_seconds": 120,
+                    "zone": {"level": 3},
+                },
+            ],
+        }
+
+        summary = summarize_session(session)
+        zones = {zone["label"]: zone for zone in summary["zones"]}
+        self.assertEqual(summary["duration_seconds"], 180)
+        self.assertEqual(summary["calories"], 18.5)
+        self.assertEqual(summary["avg_bpm"], 103.0)
+        self.assertEqual(zones["Dinlenme"]["minutes"], 1.0)
+        self.assertEqual(zones["Yağ Yakımı"]["minutes"], 2.0)
 
 
 if __name__ == "__main__":

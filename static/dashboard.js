@@ -7,12 +7,43 @@ const errorText = $("#errorText");
 const connectionPill = $("#connectionPill");
 const connectionText = $("#connectionText");
 const overlayUrl = $("#overlayUrl");
+const sessionList = $("#sessionList");
+const reportEmpty = $("#reportEmpty");
+const reportContent = $("#reportContent");
 const history = [];
 const maxHistory = 90;
 let settingsHydrated = false;
+let selectedSessionId = "";
 
 function formatKcalHour(value) {
   return `${Number(value || 0).toFixed(0)} kcal/saat`;
+}
+
+function formatDate(value) {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("tr-TR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatMinutes(seconds) {
+  const totalSeconds = Math.max(0, Number(seconds || 0));
+  if (totalSeconds < 60) return `${Math.round(totalSeconds)} sn`;
+  const minutes = totalSeconds / 60;
+  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 0 : 1)} dk`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = Math.round(minutes % 60);
+  return `${hours} sa ${remainder} dk`;
+}
+
+function formatBpm(value) {
+  return value || value === 0 ? `${Number(value).toFixed(0)} bpm` : "-- bpm";
 }
 
 function setError(message) {
@@ -57,8 +88,8 @@ function selectedDevice() {
 }
 
 function renderState(state) {
-  const zoneColor = state.zone?.color || "#aeb9b2";
-  const zoneSoft = state.zone?.soft || "rgba(174, 185, 178, 0.24)";
+  const zoneColor = state.zone?.color || "#7ddaff";
+  const zoneSoft = state.zone?.soft || "rgba(125, 218, 255, 0.24)";
 
   document.documentElement.style.setProperty("--zone-color", zoneColor);
   document.documentElement.style.setProperty("--zone-soft", zoneSoft);
@@ -156,6 +187,182 @@ async function scanDevices() {
   }
 }
 
+function renderSessionList(sessions) {
+  sessionList.replaceChildren();
+  if (!sessions.length) {
+    const empty = document.createElement("div");
+    empty.className = "session-empty";
+    empty.textContent = "Henüz kayıt yok";
+    sessionList.append(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const session of sessions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "session-item";
+    button.dataset.sessionId = session.id;
+    button.classList.toggle("selected", session.id === selectedSessionId);
+
+    const title = document.createElement("strong");
+    title.textContent = session.active ? `${session.title} · Aktif` : session.title;
+
+    const meta = document.createElement("span");
+    meta.textContent = `${formatDate(session.started_at)} · ${formatMinutes(session.duration_seconds)}`;
+
+    const stats = document.createElement("small");
+    stats.textContent = `${Number(session.calories || 0).toFixed(1)} kcal · ${formatBpm(session.avg_bpm)} ort.`;
+
+    button.append(title, meta, stats);
+    button.addEventListener("click", () => selectSession(session.id));
+    fragment.append(button);
+  }
+  sessionList.append(fragment);
+}
+
+async function loadSessions({ refreshSelected = false } = {}) {
+  const data = await request("/api/sessions");
+  const sessions = data.sessions || [];
+  if (!selectedSessionId && sessions.length) selectedSessionId = sessions[0].id;
+  renderSessionList(sessions);
+
+  if (selectedSessionId && (refreshSelected || !reportContent || reportContent.hidden)) {
+    await selectSession(selectedSessionId, { skipListUpdate: true });
+  }
+}
+
+async function selectSession(sessionId, { skipListUpdate = false } = {}) {
+  selectedSessionId = sessionId;
+  if (!skipListUpdate) {
+    for (const item of sessionList.querySelectorAll(".session-item")) {
+      item.classList.toggle("selected", item.dataset.sessionId === sessionId);
+    }
+  }
+
+  const data = await request(`/api/sessions/${encodeURIComponent(sessionId)}`);
+  renderReport(data.session);
+}
+
+function renderReport(session) {
+  const summary = session.summary || {};
+  const samples = session.samples || [];
+
+  reportEmpty.hidden = true;
+  reportContent.hidden = false;
+
+  $("#reportTitle").textContent = summary.active ? `${summary.title} · Aktif` : summary.title;
+  $("#reportMeta").textContent = `${formatDate(summary.started_at)} · ${summary.sample_count || 0} örnek`;
+  $("#reportCalories").textContent = Number(summary.calories || 0).toFixed(1);
+  $("#reportDuration").textContent = summary.duration || "00:00";
+  $("#reportAvgBpm").textContent = formatBpm(summary.avg_bpm);
+  $("#reportMinBpm").textContent = formatBpm(summary.min_bpm);
+  $("#reportMaxBpm").textContent = formatBpm(summary.max_bpm);
+
+  drawReportHeartChart(samples);
+  renderZoneBreakdown(summary.zones || []);
+}
+
+function drawReportHeartChart(samples) {
+  const canvas = $("#reportHeartChart");
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+  ctx.fillRect(0, 0, width, height);
+
+  const points = samples
+    .filter((sample) => sample.bpm)
+    .map((sample) => ({
+      elapsed: Number(sample.elapsed_seconds || 0),
+      bpm: Number(sample.bpm),
+      color: sample.zone?.color || "#7ddaff",
+    }));
+
+  if (points.length < 2) {
+    ctx.fillStyle = "#aab8af";
+    ctx.font = "18px Segoe UI, sans-serif";
+    ctx.fillText("Grafik için nabız verisi bekleniyor", 24, height / 2);
+    return;
+  }
+
+  const minElapsed = points[0].elapsed;
+  const maxElapsed = Math.max(points.at(-1).elapsed, minElapsed + 1);
+  const bpmValues = points.map((point) => point.bpm);
+  const minBpm = Math.max(40, Math.min(...bpmValues) - 10);
+  const maxBpm = Math.min(210, Math.max(...bpmValues) + 10);
+  const left = 42;
+  const right = width - 16;
+  const top = 18;
+  const bottom = height - 28;
+
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 4; i += 1) {
+    const y = top + ((bottom - top) / 3) * i;
+    ctx.beginPath();
+    ctx.moveTo(left, y);
+    ctx.lineTo(right, y);
+    ctx.stroke();
+  }
+
+  const mapPoint = (point) => {
+    const x = left + ((point.elapsed - minElapsed) / (maxElapsed - minElapsed)) * (right - left);
+    const y = bottom - ((point.bpm - minBpm) / (maxBpm - minBpm)) * (bottom - top);
+    return { x, y };
+  };
+
+  ctx.lineWidth = 4;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = mapPoint(points[index - 1]);
+    const current = mapPoint(points[index]);
+    ctx.strokeStyle = points[index].color;
+    ctx.beginPath();
+    ctx.moveTo(previous.x, previous.y);
+    ctx.lineTo(current.x, current.y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "#aab8af";
+  ctx.font = "14px Segoe UI, sans-serif";
+  ctx.fillText(`${Math.round(maxBpm)} bpm`, 6, top + 4);
+  ctx.fillText(`${Math.round(minBpm)} bpm`, 6, bottom);
+}
+
+function renderZoneBreakdown(zones) {
+  const root = $("#zoneBreakdown");
+  root.replaceChildren();
+  for (const zone of zones) {
+    const row = document.createElement("div");
+    row.className = "zone-row";
+
+    const head = document.createElement("div");
+    head.className = "zone-row-head";
+
+    const name = document.createElement("strong");
+    name.textContent = zone.label;
+    name.style.color = zone.color;
+
+    const time = document.createElement("span");
+    time.textContent = `${formatMinutes(zone.seconds)} · %${Number(zone.percent || 0).toFixed(1)}`;
+
+    const bar = document.createElement("div");
+    bar.className = "zone-row-bar";
+    const fill = document.createElement("span");
+    fill.style.background = zone.color;
+    fill.style.width = `${Math.max(zone.seconds > 0 ? 3 : 0, Number(zone.percent || 0))}%`;
+    bar.append(fill);
+
+    head.append(name, time);
+    row.append(head, bar);
+    root.append(row);
+  }
+}
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
@@ -165,6 +372,7 @@ form.addEventListener("submit", async (event) => {
     });
     fillSettings(data.settings);
     statusText.textContent = "Ayarlar kaydedildi";
+    await loadSessions({ refreshSelected: true });
   } catch (error) {
     setError(error.message);
   }
@@ -214,7 +422,9 @@ $("#resetButton").addEventListener("click", async () => {
   try {
     history.length = 0;
     await request("/api/reset", { method: "POST", body: "{}" });
+    selectedSessionId = "";
     drawChart();
+    await loadSessions({ refreshSelected: true });
   } catch (error) {
     setError(error.message);
   }
@@ -229,11 +439,22 @@ $("#copyOverlayButton").addEventListener("click", async () => {
   }
 });
 
+$("#refreshSessionsButton").addEventListener("click", async () => {
+  try {
+    await loadSessions({ refreshSelected: true });
+  } catch (error) {
+    setError(error.message);
+  }
+});
+
 overlayUrl.textContent = `${window.location.origin}/overlay`;
 
 request("/api/state")
   .then(renderState)
   .catch((error) => setError(error.message));
+
+loadSessions().catch((error) => setError(error.message));
+setInterval(() => loadSessions({ refreshSelected: true }).catch(() => {}), 15000);
 
 const events = new EventSource("/events");
 events.addEventListener("state", (event) => renderState(JSON.parse(event.data)));
