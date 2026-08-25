@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nabız Overlay</title>
+    <link rel="stylesheet" href="/static/overlay.css" />
+  </head>
+  <body>
+    <main class="overlay" id="overlayRoot">
+      <header class="brand-row">
+        <span id="displayName">Canlı Nabız</span>
+        <span class="status-dot" id="statusDot"></span>
+      </header>
+
+      <section class="hero-dial" aria-label="Canlı nabız">
+        <div class="pulse-ring" aria-hidden="true">
+          <div class="pulse-core">
+            <strong id="bpmValue">--</strong>
+            <span>bpm</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="readout">
+        <div class="zone-card">
+          <span id="zoneRange">Bölge</span>
+          <strong id="zoneValue">Bekleniyor</strong>
+          <em id="zoneSubtitle">Nabız aranıyor</em>
+        </div>
+        <div class="mini-row">
+          <span>
+            <em>Süre</em>
+            <strong id="elapsedValue">00:00</strong>
+          </span>
+          <span>
+            <em>Kalori</em>
+            <strong id="caloriesValue">0.0 kcal</strong>
+          </span>
+        </div>
+      </section>
+    </main>
+    <script src="/static/overlay.js"></script>
+  </body>
+</html>

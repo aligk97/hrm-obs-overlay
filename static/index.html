@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Canlı Nabız OBS</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body class="dashboard">
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>Canlı Nabız OBS</h1>
+          <p>Bluetooth nabız kemeri, kalori hesabı ve OBS Browser Source overlay.</p>
+        </div>
+        <div class="status-pill" id="connectionPill">
+          <span class="dot"></span>
+          <span id="connectionText">Hazır</span>
+        </div>
+      </section>
+
+      <section class="metrics" aria-label="Canlı değerler">
+        <div class="metric">
+          <span class="metric-label">Nabız</span>
+          <strong id="bpmValue">--</strong>
+          <small>bpm</small>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Süre</span>
+          <strong id="elapsedValue">00:00</strong>
+          <small>seans</small>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Kalori</span>
+          <strong id="caloriesValue">0.0</strong>
+          <small>kcal</small>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Bölge</span>
+          <strong id="zoneValue">Bekleniyor</strong>
+          <small id="kcalHourValue">0 kcal/saat</small>
+        </div>
+      </section>
+
+      <section class="content-grid">
+        <form class="panel" id="settingsForm">
+          <div class="panel-head">
+            <h2>Ayarlar</h2>
+            <button class="primary" type="submit">Kaydet</button>
+          </div>
+
+          <label>
+            Görünen ad
+            <input name="display_name" autocomplete="off" maxlength="40" />
+          </label>
+
+          <div class="form-grid">
+            <label>
+              Boy (cm)
+              <input name="height_cm" type="number" min="90" max="240" step="0.1" />
+            </label>
+            <label>
+              Kilo (kg)
+              <input name="weight_kg" type="number" min="25" max="250" step="0.1" />
+            </label>
+            <label>
+              Yaş
+              <input name="age" type="number" min="10" max="100" step="1" />
+            </label>
+            <label>
+              Cinsiyet
+              <select name="sex">
+                <option value="male">Erkek</option>
+                <option value="female">Kadın</option>
+              </select>
+            </label>
+          </div>
+        </form>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Cihaz</h2>
+            <button id="scanButton" type="button">Tara</button>
+          </div>
+
+          <select id="deviceSelect" aria-label="Bluetooth cihazı">
+            <option value="">Önce tara</option>
+          </select>
+
+          <div class="button-row">
+            <button class="primary" id="connectButton" type="button">Bağlan</button>
+            <button id="disconnectButton" type="button">Kes</button>
+            <button id="demoButton" type="button">Demo</button>
+            <button id="resetButton" type="button">Sıfırla</button>
+          </div>
+
+          <div class="note" id="statusText">Hazır</div>
+          <div class="error" id="errorText" hidden></div>
+        </section>
+
+        <section class="panel wide">
+          <div class="panel-head">
+            <h2>OBS overlay</h2>
+            <button id="copyOverlayButton" type="button">URL kopyala</button>
+          </div>
+          <div class="url-box" id="overlayUrl">http://localhost:8765/overlay</div>
+          <canvas id="pulseChart" width="900" height="160" aria-label="Nabız grafiği"></canvas>
+        </section>
+      </section>
+    </main>
+
+    <script src="/static/dashboard.js"></script>
+  </body>
+</html>
