@@ -17,6 +17,7 @@ const maxHistory = 90;
 let settingsHydrated = false;
 let selectedSessionId = "";
 let activeRecording = false;
+let knownDevice = null;
 
 function formatKcalHour(value) {
   return `${Number(value || 0).toFixed(0)} kcal/saat`;
@@ -82,11 +83,57 @@ function readSettingsForm() {
   };
 }
 
+function deviceText(device) {
+  const name = device.name || (device.is_saved ? "Kayıtlı nabız kemeri" : "Bilinmeyen cihaz");
+  const type = device.is_saved ? "Kayıtlı cihaz" : device.is_hrm ? "Nabız kemeri" : "Bluetooth";
+  const rssi = Number.isFinite(Number(device.rssi)) ? ` - ${device.rssi} dBm` : "";
+  return `${type}: ${name} - ${device.address}${rssi}`;
+}
+
+function removeDevicePlaceholders() {
+  for (const option of Array.from(deviceSelect.options)) {
+    if (!option.value) option.remove();
+  }
+}
+
+function addDeviceOption(device, { selected = false, prepend = false } = {}) {
+  if (!device?.address) return null;
+
+  removeDevicePlaceholders();
+  const existing = Array.from(deviceSelect.options).find((option) => option.value === device.address);
+  const option = existing || new Option("", device.address);
+  option.textContent = deviceText(device);
+  option.dataset.name = device.name || "";
+  option.dataset.saved = device.is_saved ? "true" : "false";
+
+  if (!existing) {
+    if (prepend && deviceSelect.firstChild) {
+      deviceSelect.insertBefore(option, deviceSelect.firstChild);
+    } else {
+      deviceSelect.add(option);
+    }
+  }
+  if (selected) option.selected = true;
+  return option;
+}
+
+function rememberDevice(address, name) {
+  if (!address) return;
+  knownDevice = {
+    address,
+    name: name || "Kayıtlı nabız kemeri",
+    is_hrm: true,
+    is_saved: true,
+  };
+  addDeviceOption(knownDevice, { selected: !deviceSelect.value, prepend: true });
+}
+
 function selectedDevice() {
   const option = deviceSelect.selectedOptions[0];
+  const address = deviceSelect.value || knownDevice?.address || "";
   return {
-    address: deviceSelect.value,
-    name: option?.dataset.name || "",
+    address,
+    name: option?.dataset.name || knownDevice?.name || "",
   };
 }
 
@@ -120,8 +167,10 @@ function renderState(state) {
 
   if (state.settings && !settingsHydrated) {
     fillSettings(state.settings);
+    rememberDevice(state.settings.device_address, state.settings.device_name);
     settingsHydrated = true;
   }
+  rememberDevice(state.device_address, state.device_name);
 
   if (state.bpm) {
     history.push({ bpm: state.bpm, color: zoneColor });
@@ -177,19 +226,35 @@ async function scanDevices() {
   setError("");
   statusText.textContent = "Bluetooth cihazları taranıyor...";
   const data = await request("/api/scan?timeout=6");
+  const previousSelection = deviceSelect.value || knownDevice?.address || "";
   deviceSelect.innerHTML = "";
   if (!data.devices?.length) {
     const option = new Option("Cihaz bulunamadı", "");
     deviceSelect.add(option);
+    statusText.textContent = "Cihaz bulunamadı";
     return;
   }
 
   for (const device of data.devices) {
-    const prefix = device.is_hrm ? "★ " : "";
-    const rssi = device.rssi ? ` (${device.rssi} dBm)` : "";
-    const option = new Option(`${prefix}${device.name} - ${device.address}${rssi}`, device.address);
-    option.dataset.name = device.name;
-    deviceSelect.add(option);
+    addDeviceOption(device, { selected: device.address === previousSelection });
+    if (device.is_saved) knownDevice = { ...device };
+  }
+  if (previousSelection && Array.from(deviceSelect.options).some((option) => option.value === previousSelection)) {
+    deviceSelect.value = previousSelection;
+  }
+
+  const savedOnly = data.devices.length === 1 && data.devices[0].is_saved;
+  if (data.warning) {
+    setError(
+      savedOnly
+        ? "Tarama tamamlanamadı ama kayıtlı cihaz seçili. Kemer takılı/uyanıksa Bağlan ile deneyin."
+        : `Tarama uyarısı: ${data.warning}`
+    );
+  }
+  if (savedOnly) {
+    statusText.textContent = "Kayıtlı cihaz seçildi";
+  } else {
+    statusText.textContent = `${data.devices.length} cihaz bulundu`;
   }
 }
 

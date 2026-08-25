@@ -186,6 +186,20 @@ select {
   color: #f5fff7;
 }
 
+select {
+  background-color: #12261f;
+}
+
+select option {
+  background: #f5fff7;
+  color: #07140d;
+}
+
+select option:checked {
+  background: #46d38d;
+  color: #07140d;
+}
+
 button {
   cursor: pointer;
   padding: 0 14px;

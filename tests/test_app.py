@@ -8,6 +8,7 @@ from app import (
     Settings,
     estimate_kcal_per_minute,
     heart_zone,
+    merge_saved_device,
     parse_heart_rate_measurement,
     sanitize_settings,
     summarize_session,
@@ -46,6 +47,35 @@ class HeartRateMeasurementTests(unittest.TestCase):
         self.assertEqual(heart_zone(145, 30)["label"], "Aerobik")
         self.assertEqual(heart_zone(160, 30)["label"], "Anaerobik")
         self.assertEqual(heart_zone(175, 30)["label"], "Maksimum")
+
+    def test_saved_device_is_listed_when_scan_is_empty(self):
+        settings = Settings(device_address="AA:BB:CC:DD:EE:FF", device_name="Decathlon HRM")
+        devices = merge_saved_device([], settings)
+
+        self.assertEqual(devices[0]["address"], "AA:BB:CC:DD:EE:FF")
+        self.assertEqual(devices[0]["name"], "Decathlon HRM")
+        self.assertTrue(devices[0]["is_saved"])
+        self.assertTrue(devices[0]["is_hrm"])
+
+    def test_saved_device_marks_matching_scan_result(self):
+        settings = Settings(device_address="AA:BB:CC:DD:EE:FF", device_name="Decathlon HRM")
+        scanned = [
+            {
+                "name": "HRM Belt",
+                "address": "aa:bb:cc:dd:ee:ff",
+                "rssi": -59,
+                "service_uuids": [],
+                "is_hrm": True,
+                "is_saved": False,
+                "source": "scan",
+            }
+        ]
+
+        devices = merge_saved_device(scanned, settings)
+
+        self.assertEqual(len(devices), 1)
+        self.assertEqual(devices[0]["name"], "HRM Belt")
+        self.assertTrue(devices[0]["is_saved"])
 
     def test_session_summary_counts_zone_durations(self):
         session = {

@@ -571,6 +571,40 @@ def _looks_like_hrm(name: str, service_uuids: list[str]) -> bool:
     return _has_hr_service(service_uuids) or name_match
 
 
+def saved_device_entry(settings: Settings) -> dict[str, Any] | None:
+    if not settings.device_address:
+        return None
+    return {
+        "name": settings.device_name or "Kayıtlı nabız kemeri",
+        "address": settings.device_address,
+        "rssi": None,
+        "service_uuids": [HR_SERVICE_UUID],
+        "is_hrm": True,
+        "is_saved": True,
+        "source": "saved",
+    }
+
+
+def merge_saved_device(devices: list[dict[str, Any]], settings: Settings) -> list[dict[str, Any]]:
+    saved = saved_device_entry(settings)
+    if not saved:
+        return devices
+
+    saved_address = saved["address"].lower()
+    merged: list[dict[str, Any]] = []
+    found = False
+    for device in devices:
+        if str(device.get("address", "")).lower() == saved_address:
+            merged.append({**device, "is_saved": True})
+            found = True
+        else:
+            merged.append(device)
+
+    if not found:
+        merged.insert(0, saved)
+    return merged
+
+
 class HrmApplication:
     def __init__(self) -> None:
         self.lock = threading.RLock()
@@ -894,6 +928,8 @@ class BleController:
                         "rssi": rssi,
                         "service_uuids": service_uuids,
                         "is_hrm": _looks_like_hrm(name, service_uuids),
+                        "is_saved": False,
+                        "source": "scan",
                     }
                 )
         except TypeError:
@@ -911,6 +947,8 @@ class BleController:
                         "rssi": getattr(device, "rssi", None),
                         "service_uuids": service_uuids,
                         "is_hrm": _looks_like_hrm(name, service_uuids),
+                        "is_saved": False,
+                        "source": "scan",
                     }
                 )
 
@@ -929,6 +967,41 @@ class BleController:
         target = self.scan_cache.get(chosen["address"], chosen["address"])
         return target, chosen
 
+    async def _resolve_known_device(self, address: str, name: str) -> tuple[Any, dict[str, Any]]:
+        cached = self.scan_cache.get(address)
+        if cached is None:
+            saved_address = address.lower()
+            cached = next(
+                (
+                    device
+                    for cached_address, device in self.scan_cache.items()
+                    if str(cached_address).lower() == saved_address
+                ),
+                None,
+            )
+        if cached is not None:
+            return cached, {"name": name or getattr(cached, "name", None) or address, "address": address}
+
+        try:
+            from bleak import BleakScanner
+        except ModuleNotFoundError:
+            return address, {"name": name or address, "address": address}
+
+        finder = getattr(BleakScanner, "find_device_by_address", None)
+        if finder is not None:
+            try:
+                device = await finder(address, timeout=4.0)
+                if device is not None:
+                    self.scan_cache[address] = device
+                    return device, {
+                        "name": name or getattr(device, "name", None) or address,
+                        "address": address,
+                    }
+            except Exception:
+                pass
+
+        return address, {"name": name or address, "address": address}
+
     async def _connect_loop(self, address: str, name: str, stop_flag: threading.Event) -> None:
         try:
             from bleak import BleakClient
@@ -941,10 +1014,12 @@ class BleController:
 
         while not stop_flag.is_set():
             try:
-                self.app.set_ble_connecting(True, "Nabiz kemeri araniyor" if not address else "Baglaniliyor")
+                self.app.set_ble_connecting(
+                    True,
+                    "Nabiz kemeri araniyor" if not address else "Kayıtlı cihaza bağlanılıyor",
+                )
                 if address:
-                    target = self.scan_cache.get(address, address)
-                    info = {"name": name or address, "address": address}
+                    target, info = await self._resolve_known_device(address, name)
                 else:
                     target, info = await self._find_hrm_device()
 
@@ -969,7 +1044,11 @@ class BleController:
             except Exception as exc:
                 if stop_flag.is_set():
                     break
-                self.app.set_status("Baglanti hatasi", str(exc))
+                hint = (
+                    "Kemer Windows'ta bağlı görünse bile takılı/uyanık olmalı. "
+                    "Listede çıkmıyorsa kayıtlı cihaz satırını seçip tekrar deneyin."
+                )
+                self.app.set_status("Baglanti hatasi", f"{exc} {hint}")
                 await asyncio.sleep(5.0)
 
         self.app.set_ble_connected(False, "Baglanti kesildi")
@@ -1033,11 +1112,17 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/scan":
             query = parse_qs(parsed.query)
             timeout = _clamp(_coerce_float((query.get("timeout") or [6])[0], 6.0), 2.0, 12.0)
+            devices: list[dict[str, Any]] = []
+            scan_error = ""
             try:
                 devices = self.server.app.ble.scan_sync(timeout)
-                self._send_json({"devices": devices})
             except Exception as exc:
-                self._send_json({"error": str(exc), "devices": []}, code=500)
+                scan_error = str(exc)
+            devices = merge_saved_device(devices, self.server.app.settings)
+            if scan_error and not devices:
+                self._send_json({"error": scan_error, "devices": []}, code=500)
+            else:
+                self._send_json({"devices": devices, "warning": scan_error})
             return
         if path.startswith("/static/"):
             relative = path.removeprefix("/static/").strip("/")

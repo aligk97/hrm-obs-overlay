@@ -52,6 +52,7 @@ Demo modu, OBS ekranini kemer olmadan denemek icindir. Gercek kemer baglantisi i
 - Rapor ekraninda toplam sure, kalori, ortalama/en dusuk/en yuksek nabiz, nabiz grafigi ve bolgelere gore sure dagilimi gorunur.
 - Aktif kayit varken ayar sayfasini kapatmaya calisirsaniz tarayici once `Kaydi durdur` ile kaydetmeniz icin uyarir.
 - `Sifirla` dugmesi aktif kaydi kapatir ve yeni bir kayit baslatir; aktif kayit yoksa sadece ekrandaki sure/kalori sayacini sifirlar.
+- Daha once secilmis bir kemer varsa tarama listesinde `Kayitli cihaz` olarak gorunur. Windows cihazi bagli gosterdigi halde tarama bos donerse bu satiri secip `Baglan` ile tekrar deneyin.
 
 Kayitlar bilgisayarda su klasorde tutulur ve GitHub'a yuklenmez:
 
@@ -88,6 +89,7 @@ Height: 820
 ## Sorun giderme
 
 - Cihaz listede yoksa kemeri takin, elektrotlari islatin, 10 saniye bekleyip tekrar tarayin.
+- Windows Bluetooth paneli kemeri bagli gosterse bile BLE taramasinda anlik gorunmeyebilir. Daha once kaydedilen cihaz satiri gorunuyorsa onu secip `Baglan` dugmesine basin.
 - Windows Bluetooth ayarlarindan kemeri daha once eslestirdiyseniz, baglanti sorununda cihaz kaydini kaldirip tekrar deneyin.
 - Terminalde `Bleak paketi yuklu degil` yazarsa `run.bat` dosyasini yeniden calistirin.
 - Baska bir uygulama kemere bagliysa once o uygulamayi kapatin; BLE kalp kemerleri ayni anda sinirli sayida baglanti kabul edebilir.
