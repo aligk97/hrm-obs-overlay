@@ -93,8 +93,9 @@ Height: 820
 ## Sorun giderme
 
 - Cihaz listede yoksa kemeri takin, elektrotlari islatin, 10 saniye bekleyip tekrar tarayin.
+- Windows Bluetooth panelinden kemeri elle baglamaniz gerekmez. Kemer takili/uyanik olsun; baglantiyi uygulamadaki `Tara` > `Cihaza baglan` akisi kursun.
+- `[WinError -2147467259] Unspecified error` gorurseniz Windows BLE baglantiyi acamamistir. Bu hata siklikla cihaz Windows Bluetooth panelinde elle bagli/eslesmisken olur; Bluetooth ayarlarindan kemeri kaldirip tekrar sadece uygulama uzerinden deneyin.
 - Windows Bluetooth paneli kemeri bagli gosterse bile BLE taramasinda anlik gorunmeyebilir. Liste bos kalirsa kemeri takin, elektrotlari islatin ve tekrar `Tara` dugmesine basin.
-- Windows Bluetooth ayarlarindan kemeri daha once eslestirdiyseniz, baglanti sorununda cihaz kaydini kaldirip tekrar deneyin.
 - Terminalde `Bleak paketi yuklu degil` yazarsa `run.bat` dosyasini yeniden calistirin.
 - Baska bir uygulama kemere bagliysa once o uygulamayi kapatin; BLE kalp kemerleri ayni anda sinirli sayida baglanti kabul edebilir.
 - Port doluysa:

@@ -9,6 +9,7 @@ from app import (
     SessionRecorder,
     Settings,
     estimate_kcal_per_minute,
+    format_ble_connection_error,
     heart_zone,
     mark_saved_device,
     parse_heart_rate_measurement,
@@ -75,6 +76,12 @@ class HeartRateMeasurementTests(unittest.TestCase):
         self.assertEqual(len(devices), 1)
         self.assertEqual(devices[0]["name"], "HRM Belt")
         self.assertTrue(devices[0]["is_saved"])
+
+    def test_windows_ble_error_gets_pairing_hint(self):
+        message = format_ble_connection_error(OSError("[WinError -2147467259] Unspecified error"))
+
+        self.assertIn("Windows BLE", message)
+        self.assertIn("Bluetooth ayarlarindan kemeri kaldirin", message)
 
     def test_session_summary_counts_zone_durations(self):
         session = {
@@ -204,6 +211,18 @@ class HeartRateMeasurementTests(unittest.TestCase):
 
             self.assertIsNone(snapshot["bpm"])
             self.assertFalse(snapshot["bpm_ready"])
+
+    def test_ble_error_unlocks_connect_flow_before_recording(self):
+        hrm = HrmApplication()
+
+        hrm.set_ble_connecting(True, "Secili cihaza baglaniliyor")
+        hrm.set_ble_error("Baglanti hatasi", "Windows BLE baglantiyi acamadi")
+        snapshot = hrm.snapshot()
+
+        self.assertFalse(snapshot["connecting"])
+        self.assertFalse(snapshot["connected"])
+        self.assertFalse(snapshot["bpm_ready"])
+        self.assertEqual(snapshot["status"], "Baglanti hatasi")
 
     def test_active_recording_keeps_stale_bpm_visible_during_reconnect(self):
         with tempfile.TemporaryDirectory() as tmp:

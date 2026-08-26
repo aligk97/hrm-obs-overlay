@@ -637,6 +637,23 @@ def mark_saved_device(devices: list[dict[str, Any]], settings: Settings) -> list
     return merged
 
 
+def format_ble_connection_error(exc: Exception) -> str:
+    message = str(exc).strip() or exc.__class__.__name__
+    windows_pairing_hint = (
+        "Windows BLE baglantiyi acamadi. Kemer Windows Bluetooth panelinde elle bagli "
+        "tutuluyorsa baglanti cakismasi olabilir. Gerekirse Windows Bluetooth "
+        "ayarlarindan kemeri kaldirin; kemeri takip uyandirin, sonra uygulamada "
+        "Tara > Cihaza baglan akisini kullanin."
+    )
+    generic_hint = (
+        "Kemer takili/uyanik olmali. Baska bir uygulama kemere bagliysa kapatin; "
+        "listede cikmiyorsa Tara ile cihazi yeniden bulun."
+    )
+    if "-2147467259" in message or "Unspecified error" in message:
+        return f"{message} {windows_pairing_hint}"
+    return f"{message} {generic_hint}"
+
+
 class HrmApplication:
     def __init__(self) -> None:
         self.lock = threading.RLock()
@@ -763,6 +780,21 @@ class HrmApplication:
         with self.lock:
             self.state.status = status
             self.state.error = error
+
+    def set_ble_error(self, status: str, error: str, retrying: bool = False) -> None:
+        with self.lock:
+            self._integrate_locked()
+            self.state.connected = False
+            self.state.connecting = retrying
+            self.state.status = status
+            self.state.error = error
+            if not retrying and not self.state.demo and not self.recorder.is_active():
+                self.state.bpm = None
+                self.state.kcal_per_hour = 0.0
+
+    def should_retry_ble_connection(self) -> bool:
+        with self.lock:
+            return self.recorder.is_active()
 
     def set_ble_connecting(self, connecting: bool, status: str) -> None:
         with self.lock:
@@ -919,6 +951,7 @@ class BleController:
         self.scan_cache: dict[str, Any] = {}
         self._stop_flag: threading.Event | None = None
         self._connect_future: Any = None
+        self._control_lock = threading.Lock()
 
     def start(self) -> None:
         if not self.thread.is_alive():
@@ -935,20 +968,68 @@ class BleController:
         future = self._submit(self._scan(timeout))
         return future.result(timeout=timeout + 8.0)
 
-    def connect_background(self, address: str = "", name: str = "") -> None:
-        self.disconnect()
-        stop_flag = threading.Event()
-        self._stop_flag = stop_flag
-        self._connect_future = self._submit(self._connect_loop(address, name, stop_flag))
+    def connect_background(
+        self, address: str = "", name: str = "", retry_on_failure: bool = False
+    ) -> None:
+        with self._control_lock:
+            if self._stop_flag:
+                self._stop_flag.set()
+            stop_flag = threading.Event()
+            self._stop_flag = stop_flag
+
+        try:
+            future = self._submit(self._disconnect_client())
+            future.result(timeout=3.0)
+        except Exception:
+            pass
+
+        self._connect_future = self._submit(
+            self._connect_loop(address, name, stop_flag, retry_on_failure)
+        )
 
     def disconnect(self) -> None:
-        if self._stop_flag:
-            self._stop_flag.set()
+        with self._control_lock:
+            if self._stop_flag:
+                self._stop_flag.set()
+            self._stop_flag = None
         try:
             self._submit(self._disconnect_client())
         except RuntimeError:
             pass
         self.app.set_ble_connected(False, "Baglanti kesildi")
+
+    def _mark_finished(self, stop_flag: threading.Event) -> bool:
+        with self._control_lock:
+            if self._stop_flag is stop_flag:
+                self._stop_flag = None
+                return True
+            return False
+
+    async def _sleep_for_retry(self, seconds: float, stop_flag: threading.Event) -> None:
+        deadline = time.monotonic() + seconds
+        while not stop_flag.is_set() and time.monotonic() < deadline:
+            await asyncio.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+
+    def _should_retry(self, retry_on_failure: bool) -> bool:
+        return retry_on_failure or self.app.should_retry_ble_connection()
+
+    def _client_kwargs(self) -> dict[str, Any]:
+        return {
+            "timeout": 20.0,
+            "services": [HR_SERVICE_UUID],
+            "winrt": {"use_cached_services": False},
+        }
+
+    def _is_current(self, stop_flag: threading.Event) -> bool:
+        with self._control_lock:
+            return self._stop_flag is stop_flag
+
+    def _discard_if_stale(self, stop_flag: threading.Event) -> bool:
+        return stop_flag.is_set() or not self._is_current(stop_flag)
+
+    def _clear_client(self, client: Any) -> None:
+        if self.client is client:
+            self.client = None
 
     async def _disconnect_client(self) -> None:
         client = self.client
@@ -958,6 +1039,8 @@ class BleController:
                     await client.disconnect()
             except Exception:
                 pass
+            finally:
+                self._clear_client(client)
 
     async def _scan(self, timeout: float) -> list[dict[str, Any]]:
         try:
@@ -1060,15 +1143,22 @@ class BleController:
 
         return address, {"name": name or address, "address": address}
 
-    async def _connect_loop(self, address: str, name: str, stop_flag: threading.Event) -> None:
+    async def _connect_loop(
+        self,
+        address: str,
+        name: str,
+        stop_flag: threading.Event,
+        retry_on_failure: bool,
+    ) -> None:
         try:
             from bleak import BleakClient
         except ModuleNotFoundError as exc:
-            self.app.set_status(
+            self.app.set_ble_error(
                 "Bleak kurulu degil",
                 "Terminalde 'pip install -r requirements.txt' calistirin veya run.bat kullanin.",
             )
-            raise RuntimeError("Bleak paketi yuklu degil.") from exc
+            self._mark_finished(stop_flag)
+            return
 
         while not stop_flag.is_set():
             try:
@@ -1076,40 +1166,63 @@ class BleController:
                     True,
                     "Nabiz kemeri araniyor" if not address else "Seçili cihaza bağlanılıyor",
                 )
+                if self._discard_if_stale(stop_flag):
+                    break
                 if address:
                     target, info = await self._resolve_known_device(address, name)
                 else:
                     target, info = await self._find_hrm_device()
 
-                async with BleakClient(target, timeout=20.0) as client:
-                    self.client = client
-                    device_name = str(info.get("name") or name or address or "HRM")
-                    device_address = str(info.get("address") or address)
-                    self.app.set_ble_connected(True, "Baglandi", device_name, device_address)
-                    await client.start_notify(HR_CHAR_UUID, self._handle_hr_notification)
+                if self._discard_if_stale(stop_flag):
+                    break
 
-                    while not stop_flag.is_set() and getattr(client, "is_connected", False):
-                        await asyncio.sleep(1.0)
+                client = None
+                try:
+                    async with BleakClient(target, **self._client_kwargs()) as client:
+                        self.client = client
+                        device_name = str(info.get("name") or name or address or "HRM")
+                        device_address = str(info.get("address") or address)
+                        self.app.set_ble_connected(True, "Baglandi", device_name, device_address)
+                        await client.start_notify(HR_CHAR_UUID, self._handle_hr_notification)
 
-                    try:
-                        await client.stop_notify(HR_CHAR_UUID)
-                    except Exception:
-                        pass
+                        while not stop_flag.is_set() and getattr(client, "is_connected", False):
+                            await asyncio.sleep(1.0)
+
+                        try:
+                            await client.stop_notify(HR_CHAR_UUID)
+                        except Exception:
+                            pass
+                finally:
+                    if client is not None:
+                        self._clear_client(client)
 
                 if not stop_flag.is_set():
+                    if not self._should_retry(retry_on_failure):
+                        self.app.set_ble_connected(
+                            False,
+                            "Baglanti koptu. Tekrar denemek icin Cihaza baglan.",
+                        )
+                        break
                     self.app.set_ble_connected(False, "Baglanti koptu, tekrar deneniyor")
-                    await asyncio.sleep(4.0)
+                    await self._sleep_for_retry(6.0, stop_flag)
             except Exception as exc:
-                if stop_flag.is_set():
+                if self._discard_if_stale(stop_flag):
                     break
-                hint = (
-                    "Kemer Windows'ta bağlı görünse bile takılı/uyanık olmalı. "
-                    "Listede çıkmıyorsa Tara ile cihazı yeniden bulun."
+                should_retry = self._should_retry(retry_on_failure)
+                status = "Baglanti hatasi, tekrar deneniyor" if should_retry else "Baglanti hatasi"
+                self.app.set_ble_error(
+                    status,
+                    format_ble_connection_error(exc),
+                    retrying=should_retry,
                 )
-                self.app.set_status("Baglanti hatasi", f"{exc} {hint}")
-                await asyncio.sleep(5.0)
+                if not should_retry:
+                    break
+                await self._sleep_for_retry(8.0, stop_flag)
 
-        self.app.set_ble_connected(False, "Baglanti kesildi")
+        if stop_flag.is_set() and self._mark_finished(stop_flag):
+            self.app.set_ble_connected(False, "Baglanti kesildi")
+        else:
+            self._mark_finished(stop_flag)
 
     def _handle_hr_notification(self, _sender: Any, data: bytearray) -> None:
         try:
