@@ -77,7 +77,7 @@
           </div>
         </form>
 
-        <section class="panel">
+        <section class="panel device-panel" id="devicePanel">
           <div class="panel-head">
             <h2>Cihaz</h2>
             <button id="scanButton" type="button">Tara</button>
@@ -101,6 +101,16 @@
           </div>
           <div class="note" id="statusText">Hazır</div>
           <div class="error" id="errorText" hidden></div>
+
+          <div class="device-scan-overlay" id="deviceScanOverlay" role="status" aria-live="polite" hidden>
+            <div class="device-scan-card">
+              <span class="scan-spinner" aria-hidden="true"></span>
+              <div>
+                <strong>Cihazlar taranıyor</strong>
+                <small>Kemer uyanık kalsın</small>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section class="panel wide">

@@ -143,6 +143,15 @@ p,
   padding: 20px;
 }
 
+.device-panel {
+  position: relative;
+  overflow: hidden;
+}
+
+.device-panel.is-scanning {
+  user-select: none;
+}
+
 .panel.wide {
   grid-column: 1 / -1;
 }
@@ -238,6 +247,70 @@ select option:checked {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #9ff0c4;
+}
+
+.device-scan-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  cursor: wait;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(70, 211, 141, 0.22), transparent 13rem),
+    rgba(10, 35, 28, 0.82);
+  backdrop-filter: blur(8px);
+  pointer-events: all;
+}
+
+.device-scan-overlay[hidden] {
+  display: none;
+}
+
+.device-scan-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-width: min(100%, 260px);
+  padding: 15px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(125, 218, 255, 0.34);
+  background: rgba(15, 54, 45, 0.88);
+  box-shadow: 0 16px 36px rgba(2, 18, 13, 0.24);
+}
+
+.device-scan-card strong,
+.device-scan-card small {
+  display: block;
+}
+
+.device-scan-card strong {
+  color: #f5fff7;
+  font-size: 16px;
+}
+
+.device-scan-card small {
+  margin-top: 3px;
+  color: #9ff0c4;
+  font-size: 13px;
+}
+
+.scan-spinner {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 3px solid rgba(125, 218, 255, 0.24);
+  border-top-color: #7ddaff;
+  border-right-color: #46d38d;
+  animation: scan-spin 0.8s linear infinite;
+}
+
+@keyframes scan-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 button {

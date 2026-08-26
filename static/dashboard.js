@@ -12,15 +12,22 @@ const sessionList = $("#sessionList");
 const reportEmpty = $("#reportEmpty");
 const reportContent = $("#reportContent");
 const recordingWarning = $("#recordingWarning");
+const devicePanel = $("#devicePanel");
+const deviceScanOverlay = $("#deviceScanOverlay");
+const scanButton = $("#scanButton");
 const connectDeviceButton = $("#connectDeviceButton");
 const startButton = $("#startButton");
 const stopButton = $("#disconnectButton");
+const demoButton = $("#demoButton");
+const resetButton = $("#resetButton");
 const history = [];
 const maxHistory = 90;
 let settingsHydrated = false;
 let selectedSessionId = "";
 let activeRecording = false;
 let knownDevice = null;
+let scanningDevices = false;
+let latestState = null;
 
 function formatKcalHour(value) {
   return `${Number(value || 0).toFixed(0)} kcal/saat`;
@@ -179,7 +186,35 @@ function selectedDevice() {
   };
 }
 
+function syncDeviceControls(state = latestState) {
+  const bpmReady = Boolean(state?.bpm_ready);
+  const isConnecting = Boolean(state?.connecting);
+  const isConnected = Boolean(state?.connected);
+  const isDemo = Boolean(state?.demo);
+
+  scanButton.disabled = scanningDevices;
+  deviceSelect.disabled = scanningDevices;
+  demoButton.disabled = scanningDevices;
+  resetButton.disabled = scanningDevices;
+  connectDeviceButton.disabled = Boolean(
+    scanningDevices || isConnecting || isConnected || isDemo || activeRecording || !hasSelectableDevice()
+  );
+  startButton.disabled = Boolean(scanningDevices || !bpmReady || activeRecording || isConnecting);
+  stopButton.disabled = Boolean(
+    scanningDevices || (!activeRecording && !isConnected && !isConnecting && !isDemo)
+  );
+}
+
+function setDeviceScanning(isScanning) {
+  scanningDevices = isScanning;
+  devicePanel.classList.toggle("is-scanning", isScanning);
+  devicePanel.setAttribute("aria-busy", isScanning ? "true" : "false");
+  deviceScanOverlay.hidden = !isScanning;
+  syncDeviceControls();
+}
+
 function renderState(state) {
+  latestState = state;
   const zoneColor = state.zone?.color || "#7ddaff";
   const zoneSoft = state.zone?.soft || "rgba(125, 218, 255, 0.24)";
 
@@ -205,14 +240,8 @@ function renderState(state) {
   }
 
   activeRecording = Boolean(state.recording_active);
-  const bpmReady = Boolean(state.bpm_ready);
   recordingWarning.hidden = !activeRecording;
-  connectDeviceButton.disabled = Boolean(
-    state.connecting || state.connected || state.demo || activeRecording || !hasSelectableDevice()
-  );
-  startButton.disabled = Boolean(!bpmReady || activeRecording || state.connecting);
-  stopButton.disabled =
-    !activeRecording && !state.connected && !state.connecting && !state.demo;
+  syncDeviceControls(state);
 
   connectionPill.classList.toggle("connected", Boolean(state.connected));
   connectionPill.classList.toggle("connecting", Boolean(state.connecting));
@@ -279,41 +308,46 @@ function drawChart() {
 }
 
 async function scanDevices() {
-  setError("");
-  statusText.textContent = "Bluetooth cihazları taranıyor...";
-  const data = await request("/api/scan?timeout=6");
-  const previousSelection = deviceSelect.value || knownDevice?.address || "";
-  knownDevice = null;
-  deviceSelect.innerHTML = "";
-  if (!data.devices?.length) {
-    const option = new Option("Cihaz bulunamadı", "");
-    deviceSelect.add(option);
-    updateDevicePreview();
-    if (!activeRecording) {
-      connectDeviceButton.disabled = true;
-      startButton.disabled = true;
+  setDeviceScanning(true);
+  try {
+    setError("");
+    statusText.textContent = "Bluetooth cihazları taranıyor...";
+    const data = await request("/api/scan?timeout=6");
+    const previousSelection = deviceSelect.value || knownDevice?.address || "";
+    knownDevice = null;
+    deviceSelect.innerHTML = "";
+    if (!data.devices?.length) {
+      const option = new Option("Cihaz bulunamadı", "");
+      deviceSelect.add(option);
+      updateDevicePreview();
+      if (!activeRecording) {
+        connectDeviceButton.disabled = true;
+        startButton.disabled = true;
+      }
+      if (data.warning) setError(`Tarama uyarısı: ${data.warning}`);
+      statusText.textContent = "Cihaz bulunamadı";
+      return;
     }
-    if (data.warning) setError(`Tarama uyarısı: ${data.warning}`);
-    statusText.textContent = "Cihaz bulunamadı";
-    return;
-  }
 
-  for (const device of data.devices) {
-    addDeviceOption(device, { selected: device.address === previousSelection });
-  }
-  if (previousSelection && Array.from(deviceSelect.options).some((option) => option.value === previousSelection)) {
-    deviceSelect.value = previousSelection;
-  }
+    for (const device of data.devices) {
+      addDeviceOption(device, { selected: device.address === previousSelection });
+    }
+    if (previousSelection && Array.from(deviceSelect.options).some((option) => option.value === previousSelection)) {
+      deviceSelect.value = previousSelection;
+    }
 
-  const selected = data.devices.find((device) => device.address === deviceSelect.value) || data.devices[0];
-  if (selected) knownDevice = { ...selected, name: deviceDisplayName(selected) };
-  updateDevicePreview();
-  if (!activeRecording) connectDeviceButton.disabled = !hasSelectableDevice();
+    const selected = data.devices.find((device) => device.address === deviceSelect.value) || data.devices[0];
+    if (selected) knownDevice = { ...selected, name: deviceDisplayName(selected) };
+    updateDevicePreview();
+    if (!activeRecording) connectDeviceButton.disabled = !hasSelectableDevice();
 
-  if (data.warning) {
-    setError(`Tarama uyarısı: ${data.warning}`);
+    if (data.warning) {
+      setError(`Tarama uyarısı: ${data.warning}`);
+    }
+    statusText.textContent = `${data.devices.length} cihaz bulundu`;
+  } finally {
+    setDeviceScanning(false);
   }
-  statusText.textContent = `${data.devices.length} cihaz bulundu`;
 }
 
 function renderSessionList(sessions) {
@@ -548,7 +582,7 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-$("#scanButton").addEventListener("click", async () => {
+scanButton.addEventListener("click", async () => {
   try {
     await scanDevices();
   } catch (error) {
@@ -569,7 +603,7 @@ deviceSelect.addEventListener("change", () => {
     knownDevice = null;
   }
   updateDevicePreview();
-  if (!activeRecording) connectDeviceButton.disabled = !hasSelectableDevice();
+  syncDeviceControls();
 });
 
 connectDeviceButton.addEventListener("click", async () => {
@@ -620,7 +654,7 @@ stopButton.addEventListener("click", async () => {
   }
 });
 
-$("#demoButton").addEventListener("click", async () => {
+demoButton.addEventListener("click", async () => {
   try {
     await request("/api/demo", { method: "POST", body: JSON.stringify({ enabled: true }) });
     await loadSessions({ refreshSelected: true });
@@ -629,7 +663,7 @@ $("#demoButton").addEventListener("click", async () => {
   }
 });
 
-$("#resetButton").addEventListener("click", async () => {
+resetButton.addEventListener("click", async () => {
   try {
     history.length = 0;
     await request("/api/reset", { method: "POST", body: "{}" });
