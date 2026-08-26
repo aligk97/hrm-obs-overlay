@@ -11,7 +11,8 @@ const sessionList = $("#sessionList");
 const reportEmpty = $("#reportEmpty");
 const reportContent = $("#reportContent");
 const recordingWarning = $("#recordingWarning");
-const stopRecordingButton = $("#stopRecordingButton");
+const startButton = $("#connectButton");
+const stopButton = $("#disconnectButton");
 const history = [];
 const maxHistory = 90;
 let settingsHydrated = false;
@@ -61,7 +62,7 @@ function request(path, options = {}) {
     ...options,
   }).then(async (response) => {
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || "İşlem tamamlanamadı");
+    if (!response.ok) throw new Error(data.error || data.message || "İşlem tamamlanamadı");
     return data;
   });
 }
@@ -150,10 +151,14 @@ function renderState(state) {
   $("#zoneValue").textContent = state.zone?.label || "Bekleniyor";
   $("#kcalHourValue").textContent = formatKcalHour(state.kcal_per_hour);
   statusText.textContent = state.error ? `${state.status}: ${state.error}` : state.status;
+  if (state.bpm_stale && !state.error) {
+    statusText.textContent = `${state.status} - son nabız değeri korunuyor`;
+  }
   setError(state.error || "");
   activeRecording = Boolean(state.recording_active);
   recordingWarning.hidden = !activeRecording;
-  stopRecordingButton.disabled = !activeRecording;
+  startButton.disabled = Boolean(state.connecting || activeRecording);
+  stopButton.disabled = !activeRecording && !state.connected && !state.connecting && !state.demo;
 
   connectionPill.classList.toggle("connected", Boolean(state.connected));
   connectionPill.classList.toggle("connecting", Boolean(state.connecting));
@@ -162,8 +167,12 @@ function renderState(state) {
     : state.connected
       ? "Bağlı"
       : state.connecting
-        ? "Bağlanıyor"
-        : "Hazır";
+        ? activeRecording
+          ? "Yeniden bağlanıyor"
+          : "Bağlanıyor"
+        : activeRecording
+          ? "Kayıt açık"
+          : "Hazır";
 
   if (state.settings && !settingsHydrated) {
     fillSettings(state.settings);
@@ -247,7 +256,7 @@ async function scanDevices() {
   if (data.warning) {
     setError(
       savedOnly
-        ? "Tarama tamamlanamadı ama kayıtlı cihaz seçili. Kemer takılı/uyanıksa Bağlan ile deneyin."
+        ? "Tarama tamamlanamadı ama kayıtlı cihaz seçili. Kemer takılı/uyanıksa Başlat ile deneyin."
         : `Tarama uyarısı: ${data.warning}`
     );
   }
@@ -270,11 +279,14 @@ function renderSessionList(sessions) {
 
   const fragment = document.createDocumentFragment();
   for (const session of sessions) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "session-item";
-    button.dataset.sessionId = session.id;
-    button.classList.toggle("selected", session.id === selectedSessionId);
+    const item = document.createElement("div");
+    item.className = "session-item";
+    item.dataset.sessionId = session.id;
+    item.classList.toggle("selected", session.id === selectedSessionId);
+
+    const selectButton = document.createElement("button");
+    selectButton.type = "button";
+    selectButton.className = "session-select";
 
     const title = document.createElement("strong");
     title.textContent = session.active ? `${session.title} · Aktif` : session.title;
@@ -285,9 +297,18 @@ function renderSessionList(sessions) {
     const stats = document.createElement("small");
     stats.textContent = `${Number(session.calories || 0).toFixed(1)} kcal · ${formatBpm(session.avg_bpm)} ort.`;
 
-    button.append(title, meta, stats);
-    button.addEventListener("click", () => selectSession(session.id));
-    fragment.append(button);
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "session-delete";
+    deleteButton.textContent = "Sil";
+    deleteButton.disabled = Boolean(session.active);
+    deleteButton.title = session.active ? "Aktif kayıt silinemez" : "Kaydı sil";
+    deleteButton.addEventListener("click", () => deleteSession(session.id));
+
+    selectButton.append(title, meta, stats);
+    selectButton.addEventListener("click", () => selectSession(session.id));
+    item.append(selectButton, deleteButton);
+    fragment.append(item);
   }
   sessionList.append(fragment);
 }
@@ -321,6 +342,27 @@ async function selectSession(sessionId, { skipListUpdate = false } = {}) {
 
   const data = await request(`/api/sessions/${encodeURIComponent(sessionId)}`);
   renderReport(data.session);
+}
+
+async function deleteSession(sessionId) {
+  if (!sessionId) return;
+  const approved = window.confirm("Bu kaydı silmek istiyor musunuz?");
+  if (!approved) return;
+
+  try {
+    const data = await request(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    });
+    if (selectedSessionId === sessionId) {
+      selectedSessionId = "";
+      reportEmpty.hidden = false;
+      reportContent.hidden = true;
+    }
+    statusText.textContent = data.message || "Kayıt silindi";
+    await loadSessions({ refreshSelected: true });
+  } catch (error) {
+    setError(error.message);
+  }
 }
 
 function renderReport(session) {
@@ -465,8 +507,9 @@ $("#scanButton").addEventListener("click", async () => {
   }
 });
 
-$("#connectButton").addEventListener("click", async () => {
+startButton.addEventListener("click", async () => {
   try {
+    startButton.disabled = true;
     await request("/api/settings", {
       method: "POST",
       body: JSON.stringify(readSettingsForm()),
@@ -475,17 +518,24 @@ $("#connectButton").addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify(selectedDevice()),
     });
-    statusText.textContent = "Bağlantı ve kayıt başlatıldı";
+    statusText.textContent = "Başlatıldı, kayıt otomatik açıldı";
     await loadSessions({ refreshSelected: true });
   } catch (error) {
+    startButton.disabled = false;
     setError(error.message);
   }
 });
 
-$("#disconnectButton").addEventListener("click", async () => {
+stopButton.addEventListener("click", async () => {
   try {
+    stopButton.disabled = true;
     await request("/api/disconnect", { method: "POST", body: "{}" });
+    activeRecording = false;
+    recordingWarning.hidden = true;
+    statusText.textContent = "Durduruldu, kayıt kaydedildi";
+    await loadSessions({ refreshSelected: true });
   } catch (error) {
+    stopButton.disabled = false;
     setError(error.message);
   }
 });
@@ -493,19 +543,6 @@ $("#disconnectButton").addEventListener("click", async () => {
 $("#demoButton").addEventListener("click", async () => {
   try {
     await request("/api/demo", { method: "POST", body: JSON.stringify({ enabled: true }) });
-    await loadSessions({ refreshSelected: true });
-  } catch (error) {
-    setError(error.message);
-  }
-});
-
-stopRecordingButton.addEventListener("click", async () => {
-  try {
-    await request("/api/recording/stop", { method: "POST", body: "{}" });
-    activeRecording = false;
-    recordingWarning.hidden = true;
-    stopRecordingButton.disabled = true;
-    statusText.textContent = "Kayıt kaydedildi ve durduruldu";
     await loadSessions({ refreshSelected: true });
   } catch (error) {
     setError(error.message);
@@ -553,7 +590,7 @@ setInterval(() => loadSessions({ refreshSelected: true }).catch(() => {}), 15000
 window.addEventListener("beforeunload", (event) => {
   if (!activeRecording) return;
   event.preventDefault();
-  event.returnValue = "Aktif yayın kaydı var. Önce Kaydı durdur ile kaydedin.";
+  event.returnValue = "Aktif yayın kaydı var. Önce Durdur ile kaydedin.";
 });
 
 const events = new EventSource("/events");

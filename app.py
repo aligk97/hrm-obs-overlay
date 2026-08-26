@@ -439,7 +439,11 @@ class SessionRecorder:
             if samples:
                 previous = samples[-1]
                 previous_elapsed = _coerce_float(previous.get("elapsed_seconds"), elapsed_seconds)
-                previous["duration_seconds"] = round(_clamp(elapsed_seconds - previous_elapsed, 0.0, 15.0), 2)
+                next_duration = round(_clamp(elapsed_seconds - previous_elapsed, 0.0, 15.0), 2)
+                previous["duration_seconds"] = max(
+                    _coerce_float(previous.get("duration_seconds"), 0.0),
+                    next_duration,
+                )
 
             samples.append(
                 {
@@ -460,6 +464,33 @@ class SessionRecorder:
             self.current["final_calories"] = round(max(0.0, calories), 2)
             self.current["final_elapsed_seconds"] = round(max(0.0, elapsed_seconds), 2)
             self.flush(force=force_flush)
+
+    def extend_current_sample(
+        self,
+        *,
+        elapsed_seconds: float,
+        calories: float,
+        kcal_per_hour: float,
+        additional_seconds: float,
+    ) -> None:
+        with self.lock:
+            if self.current is None:
+                return
+            samples = self.current.get("samples", [])
+            if not samples:
+                return
+
+            last = samples[-1]
+            last["duration_seconds"] = round(
+                _coerce_float(last.get("duration_seconds"), 0.0)
+                + _clamp(additional_seconds, 0.0, 10.0),
+                2,
+            )
+            last["calories"] = round(max(0.0, calories), 2)
+            last["kcal_per_hour"] = round(max(0.0, kcal_per_hour), 1)
+            self.current["final_calories"] = round(max(0.0, calories), 2)
+            self.current["final_elapsed_seconds"] = round(max(0.0, elapsed_seconds), 2)
+            self.flush()
 
     def finish_current(self, *, elapsed_seconds: float, calories: float) -> None:
         with self.lock:
@@ -543,6 +574,27 @@ class SessionRecorder:
                 return None
             data["summary"] = summarize_session(data)
             return data
+
+    def delete_session(self, session_id: str) -> tuple[bool, str]:
+        safe_id = "".join(ch for ch in session_id if ch.isdigit() or ch == "-")
+        if not safe_id:
+            return False, "Gecersiz kayit"
+
+        with self.lock:
+            if self.current and self.current.get("id") == safe_id:
+                return False, "Aktif kayit silinemez. Once Durdur ile kaydi bitirin."
+
+            self.sessions_dir.mkdir(parents=True, exist_ok=True)
+            path = (self.sessions_dir / f"{safe_id}.json").resolve()
+            try:
+                path.relative_to(self.sessions_dir.resolve())
+            except ValueError:
+                return False, "Gecersiz kayit"
+            if not path.exists():
+                return False, "Kayit bulunamadi"
+
+            path.unlink()
+            return True, "Kayit silindi"
 
 
 def format_seconds(seconds: float) -> str:
@@ -662,14 +714,21 @@ class HrmApplication:
         elapsed = min(elapsed, 10.0)
         self.state.last_integrated_at = now
 
-        bpm_is_fresh = (
-            self.state.bpm is not None and (now - self.state.bpm_updated_at) <= 12.0
+        bpm_is_fresh = self.state.bpm is not None and (now - self.state.bpm_updated_at) <= 12.0
+        bpm_can_drive_estimate = self.state.bpm is not None and (
+            bpm_is_fresh or self.recorder.is_active()
         )
-        if bpm_is_fresh:
+        if bpm_can_drive_estimate:
             kcal_per_minute = estimate_kcal_per_minute(self.state.bpm, self.settings)
             self.state.kcal_per_hour = kcal_per_minute * 60.0
             if self.recorder.is_active():
                 self.state.calories += kcal_per_minute * (elapsed / 60.0)
+                self.recorder.extend_current_sample(
+                    elapsed_seconds=now - self.state.session_started_at,
+                    calories=self.state.calories,
+                    kcal_per_hour=self.state.kcal_per_hour,
+                    additional_seconds=elapsed,
+                )
         else:
             self.state.kcal_per_hour = 0.0
 
@@ -730,7 +789,7 @@ class HrmApplication:
                 self.state.device_name = name
             if address:
                 self.state.device_address = address
-            if not connected and not self.state.demo:
+            if not connected and not self.state.demo and not self.recorder.is_active():
                 self.state.bpm = None
             self.state.error = ""
 
@@ -785,8 +844,8 @@ class HrmApplication:
             self._integrate_locked()
             now = time.monotonic()
             bpm_fresh = self.state.bpm is not None and (now - self.state.bpm_updated_at) <= 12.0
-            visible_bpm = self.state.bpm if bpm_fresh else None
             recording_active = self.recorder.is_active()
+            visible_bpm = self.state.bpm if bpm_fresh or recording_active else None
             elapsed_seconds = (
                 now - self.state.session_started_at
                 if recording_active
@@ -797,6 +856,7 @@ class HrmApplication:
                 "settings": asdict(self.settings),
                 "bpm": visible_bpm,
                 "last_bpm": self.state.bpm,
+                "bpm_stale": bool(visible_bpm is not None and not bpm_fresh),
                 "bpm_age_seconds": round(now - self.state.bpm_updated_at, 1)
                 if self.state.bpm_updated_at
                 else None,
@@ -1131,6 +1191,26 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
 
         self._send_json({"error": "Bulunamadi"}, code=404)
 
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path.startswith("/api/sessions/"):
+            session_id = path.removeprefix("/api/sessions/").strip("/")
+            deleted, message = self.server.app.recorder.delete_session(session_id)
+            self._send_json(
+                {
+                    "ok": deleted,
+                    "message": message,
+                    "error": "" if deleted else message,
+                    "sessions": self.server.app.recorder.list_summaries(),
+                },
+                code=200 if deleted else 409,
+            )
+            return
+
+        self._send_json({"error": "Bulunamadi"}, code=404)
+
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
@@ -1163,10 +1243,12 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/disconnect":
             self.server.app.demo.stop()
             self.server.app.ble.disconnect()
+            self.server.app.stop_recording("Durduruldu ve kayit kaydedildi")
             self._send_json(
                 {
                     "ok": True,
                     "recording_active": self.server.app.recorder.is_active(),
+                    "sessions": self.server.app.recorder.list_summaries(),
                 }
             )
             return

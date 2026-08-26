@@ -38,21 +38,23 @@ py -3.14 -m venv .venv
 2. Boy, kilo, yas ve cinsiyet alanlarini doldurup kaydedin.
 3. `Tara` dugmesine basin.
 4. Decathlon/HRM/Heart Rate olarak gorunen cihazi secin.
-5. `Baglan` dugmesine basin.
+5. `Baslat` dugmesine basin.
 6. Nabiz degeri gelince kalori ve sure otomatik akar.
 
-Demo modu, OBS ekranini kemer olmadan denemek icindir. Gercek kemer baglantisi icin demo aciksa `Kes` dugmesine basin veya dogrudan `Baglan` dugmesini kullanin.
+Demo modu, OBS ekranini kemer olmadan denemek icindir. Gercek kemer baglantisi icin demo aciksa `Durdur` dugmesine basin veya dogrudan `Baslat` dugmesini kullanin.
 
 ## Yayın kayıtları ve raporlar
 
-- `Baglan` dugmesine bastiginizda otomatik yeni bir yayin kaydi baslar.
+- `Baslat` dugmesine bastiginizda otomatik yeni bir yayin kaydi baslar.
 - Nabiz verisi geldikce kayit dosyasi otomatik guncellenir.
-- Yayini bitirirken `Kaydi durdur` dugmesine basin; kayit kapanir ve eski kayitlar listesine duser.
+- Yayini bitirirken `Durdur` dugmesine basin; baglanti kapanir, kayit tamamlanir ve eski kayitlar listesine duser.
 - Ayar ekranindaki `Yayin kayitlari` bolumunden eski kayitlara tiklayabilirsiniz.
+- Eski kayitlari satirin yanindaki `Sil` dugmesiyle silebilirsiniz. Aktif kayit silinemez; once `Durdur` ile bitirilmelidir.
 - Rapor ekraninda toplam sure, kalori, ortalama/en dusuk/en yuksek nabiz, nabiz grafigi ve bolgelere gore sure dagilimi gorunur.
-- Aktif kayit varken ayar sayfasini kapatmaya calisirsaniz tarayici once `Kaydi durdur` ile kaydetmeniz icin uyarir.
+- Aktif kayit varken ayar sayfasini kapatmaya calisirsaniz tarayici once `Durdur` ile kaydetmeniz icin uyarir.
 - `Sifirla` dugmesi aktif kaydi kapatir ve yeni bir kayit baslatir; aktif kayit yoksa sadece ekrandaki sure/kalori sayacini sifirlar.
-- Daha once secilmis bir kemer varsa tarama listesinde `Kayitli cihaz` olarak gorunur. Windows cihazi bagli gosterdigi halde tarama bos donerse bu satiri secip `Baglan` ile tekrar deneyin.
+- Daha once secilmis bir kemer varsa tarama listesinde `Kayitli cihaz` olarak gorunur. Windows cihazi bagli gosterdigi halde tarama bos donerse bu satiri secip `Baslat` ile tekrar deneyin.
+- Baglanti koparsa aktif kayit durmaz. Ekranda son nabiz degeri korunur, sure/kalori akisi devam eder ve uygulama arka planda yeniden baglanmayi dener.
 
 Kayitlar bilgisayarda su klasorde tutulur ve GitHub'a yuklenmez:
 
@@ -89,7 +91,7 @@ Height: 820
 ## Sorun giderme
 
 - Cihaz listede yoksa kemeri takin, elektrotlari islatin, 10 saniye bekleyip tekrar tarayin.
-- Windows Bluetooth paneli kemeri bagli gosterse bile BLE taramasinda anlik gorunmeyebilir. Daha once kaydedilen cihaz satiri gorunuyorsa onu secip `Baglan` dugmesine basin.
+- Windows Bluetooth paneli kemeri bagli gosterse bile BLE taramasinda anlik gorunmeyebilir. Daha once kaydedilen cihaz satiri gorunuyorsa onu secip `Baslat` dugmesine basin.
 - Windows Bluetooth ayarlarindan kemeri daha once eslestirdiyseniz, baglanti sorununda cihaz kaydini kaldirip tekrar deneyin.
 - Terminalde `Bleak paketi yuklu degil` yazarsa `run.bat` dosyasini yeniden calistirin.
 - Baska bir uygulama kemere bagliysa once o uygulamayi kapatin; BLE kalp kemerleri ayni anda sinirli sayida baglanti kabul edebilir.

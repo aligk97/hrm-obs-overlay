@@ -1,9 +1,11 @@
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 from app import (
+    HrmApplication,
     SessionRecorder,
     Settings,
     estimate_kcal_per_minute,
@@ -140,6 +142,49 @@ class HeartRateMeasurementTests(unittest.TestCase):
             self.assertEqual(saved["ended_at"] is not None, True)
             self.assertEqual(len(saved["samples"]), 2)
             self.assertEqual(recorder.list_summaries()[0]["calories"], 11.0)
+
+    def test_session_recorder_deletes_finished_recording(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = SessionRecorder(Path(tmp))
+            session = recorder.start_new(Settings())
+            recorder.finish_current(elapsed_seconds=10, calories=1.5)
+
+            deleted, message = recorder.delete_session(session["id"])
+
+            self.assertTrue(deleted)
+            self.assertEqual(message, "Kayit silindi")
+            self.assertFalse((Path(tmp) / f"{session['id']}.json").exists())
+            self.assertEqual(recorder.list_summaries(), [])
+
+    def test_session_recorder_keeps_active_recording_when_delete_requested(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = SessionRecorder(Path(tmp))
+            session = recorder.start_new(Settings())
+
+            deleted, message = recorder.delete_session(session["id"])
+
+            self.assertFalse(deleted)
+            self.assertIn("Aktif kayit", message)
+            self.assertTrue((Path(tmp) / f"{session['id']}.json").exists())
+            self.assertTrue(recorder.is_active())
+
+    def test_active_recording_keeps_stale_bpm_visible_during_reconnect(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hrm = HrmApplication()
+            hrm.recorder = SessionRecorder(Path(tmp))
+            hrm.start_recording()
+            hrm.update_bpm(132)
+            hrm.state.bpm_updated_at = time.monotonic() - 30
+            hrm.state.last_integrated_at = time.monotonic() - 5
+
+            hrm.set_ble_connected(False, "Baglanti koptu, tekrar deneniyor")
+            snapshot = hrm.snapshot()
+            active_summary = summarize_session(hrm.recorder.current)
+
+            self.assertEqual(snapshot["bpm"], 132)
+            self.assertTrue(snapshot["bpm_stale"])
+            self.assertGreater(snapshot["kcal_per_hour"], 0)
+            self.assertGreater(active_summary["measured_seconds"], 0)
 
 
 if __name__ == "__main__":
