@@ -168,6 +168,26 @@ class HeartRateMeasurementTests(unittest.TestCase):
             self.assertTrue((Path(tmp) / f"{session['id']}.json").exists())
             self.assertTrue(recorder.is_active())
 
+    def test_recording_waits_until_ble_connection_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hrm = HrmApplication()
+            hrm.recorder = SessionRecorder(Path(tmp))
+
+            active_session, should_connect = hrm.prepare_recording_after_connection()
+            pending_snapshot = hrm.snapshot()
+
+            self.assertEqual(active_session, {})
+            self.assertTrue(should_connect)
+            self.assertFalse(pending_snapshot["recording_active"])
+            self.assertTrue(pending_snapshot["start_pending"])
+
+            hrm.set_ble_connected(True, "Baglandi", "Decathlon HRM", "AA:BB")
+            connected_snapshot = hrm.snapshot()
+
+            self.assertTrue(connected_snapshot["recording_active"])
+            self.assertFalse(connected_snapshot["start_pending"])
+            self.assertEqual(connected_snapshot["device_name"], "Decathlon HRM")
+
     def test_active_recording_keeps_stale_bpm_visible_during_reconnect(self):
         with tempfile.TemporaryDirectory() as tmp:
             hrm = HrmApplication()

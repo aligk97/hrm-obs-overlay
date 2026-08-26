@@ -155,21 +155,23 @@ function renderState(state) {
     statusText.textContent = `${state.status} - son nabız değeri korunuyor`;
   }
   setError(state.error || "");
+  const startPending = Boolean(state.start_pending);
   activeRecording = Boolean(state.recording_active);
   recordingWarning.hidden = !activeRecording;
-  startButton.disabled = Boolean(state.connecting || activeRecording);
-  stopButton.disabled = !activeRecording && !state.connected && !state.connecting && !state.demo;
+  startButton.disabled = Boolean(state.connecting || startPending || activeRecording);
+  stopButton.disabled =
+    !activeRecording && !state.connected && !state.connecting && !state.demo && !startPending;
 
   connectionPill.classList.toggle("connected", Boolean(state.connected));
-  connectionPill.classList.toggle("connecting", Boolean(state.connecting));
+  connectionPill.classList.toggle("connecting", Boolean(state.connecting || startPending));
   connectionText.textContent = state.demo
     ? "Demo"
     : state.connected
       ? "Bağlı"
-      : state.connecting
+      : state.connecting || startPending
         ? activeRecording
           ? "Yeniden bağlanıyor"
-          : "Bağlanıyor"
+          : "Bağlantı bekleniyor"
         : activeRecording
           ? "Kayıt açık"
           : "Hazır";
@@ -514,11 +516,13 @@ startButton.addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify(readSettingsForm()),
     });
-    await request("/api/connect", {
+    const data = await request("/api/connect", {
       method: "POST",
       body: JSON.stringify(selectedDevice()),
     });
-    statusText.textContent = "Başlatıldı, kayıt otomatik açıldı";
+    statusText.textContent = data.recording_pending
+      ? "Bluetooth bağlantısı deneniyor. Kayıt bağlantıdan sonra başlayacak."
+      : "Kayıt başladı";
     await loadSessions({ refreshSelected: true });
   } catch (error) {
     startButton.disabled = false;

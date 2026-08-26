@@ -39,13 +39,15 @@ py -3.14 -m venv .venv
 3. `Tara` dugmesine basin.
 4. Decathlon/HRM/Heart Rate olarak gorunen cihazi secin.
 5. `Baslat` dugmesine basin.
-6. Nabiz degeri gelince kalori ve sure otomatik akar.
+6. Uygulama once Bluetooth baglantisini kurar. Baglanti basarili olunca kayit, sure ve kalori otomatik baslar.
+7. Nabiz degeri gelince kalori canli akar.
 
 Demo modu, OBS ekranini kemer olmadan denemek icindir. Gercek kemer baglantisi icin demo aciksa `Durdur` dugmesine basin veya dogrudan `Baslat` dugmesini kullanin.
 
 ## Yayın kayıtları ve raporlar
 
-- `Baslat` dugmesine bastiginizda otomatik yeni bir yayin kaydi baslar.
+- `Baslat` dugmesine bastiginizda once Bluetooth baglantisi denenir; baglanti basarili olmadan yayin kaydi baslamaz.
+- Bluetooth baglantisi basarili olunca otomatik yeni bir yayin kaydi baslar.
 - Nabiz verisi geldikce kayit dosyasi otomatik guncellenir.
 - Yayini bitirirken `Durdur` dugmesine basin; baglanti kapanir, kayit tamamlanir ve eski kayitlar listesine duser.
 - Ayar ekranindaki `Yayin kayitlari` bolumunden eski kayitlara tiklayabilirsiniz.
