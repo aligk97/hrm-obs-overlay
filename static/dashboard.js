@@ -2,6 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 
 const form = $("#settingsForm");
 const deviceSelect = $("#deviceSelect");
+const devicePreview = $("#devicePreview");
 const statusText = $("#statusText");
 const errorText = $("#errorText");
 const connectionPill = $("#connectionPill");
@@ -84,11 +85,17 @@ function readSettingsForm() {
   };
 }
 
+function deviceDisplayName(device) {
+  const rawName = String(device?.name || "").trim();
+  if (rawName && rawName !== "Bilinmeyen") return rawName;
+  return device?.is_hrm || device?.is_saved ? "Nabız kemeri" : "Bilinmeyen cihaz";
+}
+
 function deviceText(device) {
-  const name = device.name || (device.is_saved ? "Kayıtlı nabız kemeri" : "Bilinmeyen cihaz");
-  const type = device.is_saved ? "Kayıtlı cihaz" : device.is_hrm ? "Nabız kemeri" : "Bluetooth";
+  const name = deviceDisplayName(device);
+  const star = device.is_hrm || device.is_saved ? "★ " : "";
   const rssi = Number.isFinite(Number(device.rssi)) ? ` - ${device.rssi} dBm` : "";
-  return `${type}: ${name} - ${device.address}${rssi}`;
+  return `${star}${name} - ${device.address}${rssi}`;
 }
 
 function removeDevicePlaceholders() {
@@ -104,7 +111,9 @@ function addDeviceOption(device, { selected = false, prepend = false } = {}) {
   const existing = Array.from(deviceSelect.options).find((option) => option.value === device.address);
   const option = existing || new Option("", device.address);
   option.textContent = deviceText(device);
-  option.dataset.name = device.name || "";
+  option.dataset.name = deviceDisplayName(device);
+  option.dataset.address = device.address;
+  option.dataset.hrm = device.is_hrm ? "true" : "false";
   option.dataset.saved = device.is_saved ? "true" : "false";
 
   if (!existing) {
@@ -115,22 +124,53 @@ function addDeviceOption(device, { selected = false, prepend = false } = {}) {
     }
   }
   if (selected) option.selected = true;
+  updateDevicePreview();
   return option;
 }
 
-function rememberDevice(address, name) {
+function rememberDevice(address, name, { connected = false } = {}) {
   if (!address) return;
   knownDevice = {
     address,
-    name: name || "Kayıtlı nabız kemeri",
+    name: name || "Nabız kemeri",
     is_hrm: true,
-    is_saved: true,
+    is_saved: connected,
   };
-  addDeviceOption(knownDevice, { selected: !deviceSelect.value, prepend: true });
+  if (connected) addDeviceOption(knownDevice, { selected: !deviceSelect.value, prepend: true });
+}
+
+function selectedDeviceOption() {
+  return deviceSelect.selectedOptions[0] || null;
+}
+
+function hasSelectableDevice() {
+  return Boolean(deviceSelect.value || knownDevice?.address);
+}
+
+function updateDevicePreview() {
+  const option = selectedDeviceOption();
+  if (!option?.value) {
+    devicePreview.hidden = true;
+    devicePreview.replaceChildren();
+    return;
+  }
+
+  const star = document.createElement("span");
+  star.className = "device-star";
+  star.textContent = "★";
+
+  const name = document.createElement("strong");
+  name.textContent = option.dataset.name || "Nabız kemeri";
+
+  const address = document.createElement("small");
+  address.textContent = option.dataset.address || option.value;
+
+  devicePreview.replaceChildren(star, name, address);
+  devicePreview.hidden = false;
 }
 
 function selectedDevice() {
-  const option = deviceSelect.selectedOptions[0];
+  const option = selectedDeviceOption();
   const address = deviceSelect.value || knownDevice?.address || "";
   return {
     address,
@@ -155,10 +195,20 @@ function renderState(state) {
     statusText.textContent = `${state.status} - son nabız değeri korunuyor`;
   }
   setError(state.error || "");
+  if (state.settings && !settingsHydrated) {
+    fillSettings(state.settings);
+    settingsHydrated = true;
+  }
+  if (state.connected || state.demo) {
+    rememberDevice(state.device_address, state.device_name, { connected: true });
+  }
+
   const startPending = Boolean(state.start_pending);
   activeRecording = Boolean(state.recording_active);
   recordingWarning.hidden = !activeRecording;
-  startButton.disabled = Boolean(state.connecting || startPending || activeRecording);
+  startButton.disabled = Boolean(
+    state.connecting || startPending || activeRecording || !hasSelectableDevice()
+  );
   stopButton.disabled =
     !activeRecording && !state.connected && !state.connecting && !state.demo && !startPending;
 
@@ -175,13 +225,6 @@ function renderState(state) {
         : activeRecording
           ? "Kayıt açık"
           : "Hazır";
-
-  if (state.settings && !settingsHydrated) {
-    fillSettings(state.settings);
-    rememberDevice(state.settings.device_address, state.settings.device_name);
-    settingsHydrated = true;
-  }
-  rememberDevice(state.device_address, state.device_name);
 
   if (state.bpm) {
     history.push({ bpm: state.bpm, color: zoneColor });
@@ -238,35 +281,34 @@ async function scanDevices() {
   statusText.textContent = "Bluetooth cihazları taranıyor...";
   const data = await request("/api/scan?timeout=6");
   const previousSelection = deviceSelect.value || knownDevice?.address || "";
+  knownDevice = null;
   deviceSelect.innerHTML = "";
   if (!data.devices?.length) {
     const option = new Option("Cihaz bulunamadı", "");
     deviceSelect.add(option);
+    updateDevicePreview();
+    if (!activeRecording) startButton.disabled = true;
+    if (data.warning) setError(`Tarama uyarısı: ${data.warning}`);
     statusText.textContent = "Cihaz bulunamadı";
     return;
   }
 
   for (const device of data.devices) {
     addDeviceOption(device, { selected: device.address === previousSelection });
-    if (device.is_saved) knownDevice = { ...device };
   }
   if (previousSelection && Array.from(deviceSelect.options).some((option) => option.value === previousSelection)) {
     deviceSelect.value = previousSelection;
   }
 
-  const savedOnly = data.devices.length === 1 && data.devices[0].is_saved;
+  const selected = data.devices.find((device) => device.address === deviceSelect.value) || data.devices[0];
+  if (selected) knownDevice = { ...selected, name: deviceDisplayName(selected) };
+  updateDevicePreview();
+  if (!activeRecording) startButton.disabled = !hasSelectableDevice();
+
   if (data.warning) {
-    setError(
-      savedOnly
-        ? "Tarama tamamlanamadı ama kayıtlı cihaz seçili. Kemer takılı/uyanıksa Başlat ile deneyin."
-        : `Tarama uyarısı: ${data.warning}`
-    );
+    setError(`Tarama uyarısı: ${data.warning}`);
   }
-  if (savedOnly) {
-    statusText.textContent = "Kayıtlı cihaz seçildi";
-  } else {
-    statusText.textContent = `${data.devices.length} cihaz bulundu`;
-  }
+  statusText.textContent = `${data.devices.length} cihaz bulundu`;
 }
 
 function renderSessionList(sessions) {
@@ -507,6 +549,22 @@ $("#scanButton").addEventListener("click", async () => {
   } catch (error) {
     setError(error.message);
   }
+});
+
+deviceSelect.addEventListener("change", () => {
+  const option = selectedDeviceOption();
+  if (option?.value) {
+    knownDevice = {
+      address: option.value,
+      name: option.dataset.name || "Nabız kemeri",
+      is_hrm: option.dataset.hrm === "true",
+      is_saved: option.dataset.saved === "true",
+    };
+  } else {
+    knownDevice = null;
+  }
+  updateDevicePreview();
+  if (!activeRecording) startButton.disabled = !hasSelectableDevice();
 });
 
 startButton.addEventListener("click", async () => {

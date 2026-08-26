@@ -624,37 +624,17 @@ def _looks_like_hrm(name: str, service_uuids: list[str]) -> bool:
     return _has_hr_service(service_uuids) or name_match
 
 
-def saved_device_entry(settings: Settings) -> dict[str, Any] | None:
+def mark_saved_device(devices: list[dict[str, Any]], settings: Settings) -> list[dict[str, Any]]:
     if not settings.device_address:
-        return None
-    return {
-        "name": settings.device_name or "Kayıtlı nabız kemeri",
-        "address": settings.device_address,
-        "rssi": None,
-        "service_uuids": [HR_SERVICE_UUID],
-        "is_hrm": True,
-        "is_saved": True,
-        "source": "saved",
-    }
-
-
-def merge_saved_device(devices: list[dict[str, Any]], settings: Settings) -> list[dict[str, Any]]:
-    saved = saved_device_entry(settings)
-    if not saved:
         return devices
 
-    saved_address = saved["address"].lower()
+    saved_address = settings.device_address.lower()
     merged: list[dict[str, Any]] = []
-    found = False
     for device in devices:
         if str(device.get("address", "")).lower() == saved_address:
             merged.append({**device, "is_saved": True})
-            found = True
         else:
             merged.append(device)
-
-    if not found:
-        merged.insert(0, saved)
     return merged
 
 
@@ -699,13 +679,15 @@ class HrmApplication:
             self._integrate_locked()
             if self.recorder.is_active():
                 return summarize_session(self.recorder.current) if self.recorder.current else {}, False
-            if self.state.connected or self.state.demo:
-                return self._start_recording_locked("Kayıt başladı"), False
 
             self.state.start_pending = True
-            self.state.status = "Bluetooth bağlantısı bekleniyor"
+            self.state.status = (
+                "Nabız verisi bekleniyor"
+                if self.state.connected or self.state.demo
+                else "Bluetooth bağlantısı bekleniyor"
+            )
             self.state.error = ""
-            return {}, True
+            return {}, not (self.state.connected or self.state.demo)
 
     def stop_recording(self, status: str = "Kayıt durduruldu") -> None:
         with self.lock:
@@ -807,8 +789,6 @@ class HrmApplication:
             self.state.connected = connected
             self.state.connecting = False
             self.state.status = status
-            if connected:
-                self.state.start_pending = False
             if name:
                 self.state.device_name = name
             if address:
@@ -817,7 +797,7 @@ class HrmApplication:
                 self.state.bpm = None
             self.state.error = ""
             if should_start_recording:
-                self._start_recording_locked("Bağlantı hazır, kayıt başladı")
+                self.state.status = "Nabız verisi bekleniyor"
 
     def update_bpm(
         self,
@@ -838,6 +818,8 @@ class HrmApplication:
                 self.state.device_name = device_name
             if device_address:
                 self.state.device_address = device_address
+            if self.state.start_pending and not self.recorder.is_active():
+                self._start_recording_locked("Nabız alındı, kayıt başladı")
             if not self.state.status or self.state.status.startswith("Baglanti"):
                 self.state.status = "Nabiz okunuyor"
             elapsed_seconds = time.monotonic() - self.state.session_started_at
@@ -1103,7 +1085,7 @@ class BleController:
             try:
                 self.app.set_ble_connecting(
                     True,
-                    "Nabiz kemeri araniyor" if not address else "Kayıtlı cihaza bağlanılıyor",
+                    "Nabiz kemeri araniyor" if not address else "Seçili cihaza bağlanılıyor",
                 )
                 if address:
                     target, info = await self._resolve_known_device(address, name)
@@ -1133,7 +1115,7 @@ class BleController:
                     break
                 hint = (
                     "Kemer Windows'ta bağlı görünse bile takılı/uyanık olmalı. "
-                    "Listede çıkmıyorsa kayıtlı cihaz satırını seçip tekrar deneyin."
+                    "Listede çıkmıyorsa Tara ile cihazı yeniden bulun."
                 )
                 self.app.set_status("Baglanti hatasi", f"{exc} {hint}")
                 await asyncio.sleep(5.0)
@@ -1205,11 +1187,8 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
                 devices = self.server.app.ble.scan_sync(timeout)
             except Exception as exc:
                 scan_error = str(exc)
-            devices = merge_saved_device(devices, self.server.app.settings)
-            if scan_error and not devices:
-                self._send_json({"error": scan_error, "devices": []}, code=500)
-            else:
-                self._send_json({"devices": devices, "warning": scan_error})
+            devices = mark_saved_device(devices, self.server.app.settings)
+            self._send_json({"devices": devices, "warning": scan_error})
             return
         if path.startswith("/static/"):
             relative = path.removeprefix("/static/").strip("/")
@@ -1282,9 +1261,12 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if path == "/api/recording/start":
-            if not (self.server.app.state.connected or self.server.app.state.demo):
+            with self.server.app.lock:
+                bpm_ready = self.server.app.state.bpm is not None
+                source_ready = self.server.app.state.connected or self.server.app.state.demo
+            if not (source_ready and bpm_ready):
                 self._send_json(
-                    {"error": "Bluetooth baglantisi kurulmadan kayit baslatilamaz"},
+                    {"error": "Nabiz verisi gelmeden kayit baslatilamaz"},
                     code=409,
                 )
                 return

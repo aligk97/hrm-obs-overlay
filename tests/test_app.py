@@ -10,7 +10,7 @@ from app import (
     Settings,
     estimate_kcal_per_minute,
     heart_zone,
-    merge_saved_device,
+    mark_saved_device,
     parse_heart_rate_measurement,
     sanitize_settings,
     summarize_session,
@@ -50,14 +50,11 @@ class HeartRateMeasurementTests(unittest.TestCase):
         self.assertEqual(heart_zone(160, 30)["label"], "Anaerobik")
         self.assertEqual(heart_zone(175, 30)["label"], "Maksimum")
 
-    def test_saved_device_is_listed_when_scan_is_empty(self):
+    def test_saved_device_is_not_listed_when_scan_is_empty(self):
         settings = Settings(device_address="AA:BB:CC:DD:EE:FF", device_name="Decathlon HRM")
-        devices = merge_saved_device([], settings)
+        devices = mark_saved_device([], settings)
 
-        self.assertEqual(devices[0]["address"], "AA:BB:CC:DD:EE:FF")
-        self.assertEqual(devices[0]["name"], "Decathlon HRM")
-        self.assertTrue(devices[0]["is_saved"])
-        self.assertTrue(devices[0]["is_hrm"])
+        self.assertEqual(devices, [])
 
     def test_saved_device_marks_matching_scan_result(self):
         settings = Settings(device_address="AA:BB:CC:DD:EE:FF", device_name="Decathlon HRM")
@@ -73,7 +70,7 @@ class HeartRateMeasurementTests(unittest.TestCase):
             }
         ]
 
-        devices = merge_saved_device(scanned, settings)
+        devices = mark_saved_device(scanned, settings)
 
         self.assertEqual(len(devices), 1)
         self.assertEqual(devices[0]["name"], "HRM Belt")
@@ -168,7 +165,7 @@ class HeartRateMeasurementTests(unittest.TestCase):
             self.assertTrue((Path(tmp) / f"{session['id']}.json").exists())
             self.assertTrue(recorder.is_active())
 
-    def test_recording_waits_until_ble_connection_succeeds(self):
+    def test_recording_waits_until_first_bpm_after_ble_connection(self):
         with tempfile.TemporaryDirectory() as tmp:
             hrm = HrmApplication()
             hrm.recorder = SessionRecorder(Path(tmp))
@@ -184,9 +181,16 @@ class HeartRateMeasurementTests(unittest.TestCase):
             hrm.set_ble_connected(True, "Baglandi", "Decathlon HRM", "AA:BB")
             connected_snapshot = hrm.snapshot()
 
-            self.assertTrue(connected_snapshot["recording_active"])
-            self.assertFalse(connected_snapshot["start_pending"])
+            self.assertFalse(connected_snapshot["recording_active"])
+            self.assertTrue(connected_snapshot["start_pending"])
             self.assertEqual(connected_snapshot["device_name"], "Decathlon HRM")
+
+            hrm.update_bpm(128)
+            bpm_snapshot = hrm.snapshot()
+
+            self.assertTrue(bpm_snapshot["recording_active"])
+            self.assertFalse(bpm_snapshot["start_pending"])
+            self.assertEqual(bpm_snapshot["bpm"], 128)
 
     def test_active_recording_keeps_stale_bpm_visible_during_reconnect(self):
         with tempfile.TemporaryDirectory() as tmp:
