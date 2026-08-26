@@ -1356,7 +1356,7 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(frame.encode("utf-8"))
                 self.wfile.flush()
                 time.sleep(1.0)
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
                 break
 
 
