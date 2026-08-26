@@ -165,32 +165,45 @@ class HeartRateMeasurementTests(unittest.TestCase):
             self.assertTrue((Path(tmp) / f"{session['id']}.json").exists())
             self.assertTrue(recorder.is_active())
 
-    def test_recording_waits_until_first_bpm_after_ble_connection(self):
+    def test_connection_reads_bpm_before_recording_can_start(self):
         with tempfile.TemporaryDirectory() as tmp:
             hrm = HrmApplication()
             hrm.recorder = SessionRecorder(Path(tmp))
-
-            active_session, should_connect = hrm.prepare_recording_after_connection()
-            pending_snapshot = hrm.snapshot()
-
-            self.assertEqual(active_session, {})
-            self.assertTrue(should_connect)
-            self.assertFalse(pending_snapshot["recording_active"])
-            self.assertTrue(pending_snapshot["start_pending"])
 
             hrm.set_ble_connected(True, "Baglandi", "Decathlon HRM", "AA:BB")
             connected_snapshot = hrm.snapshot()
 
             self.assertFalse(connected_snapshot["recording_active"])
-            self.assertTrue(connected_snapshot["start_pending"])
+            self.assertFalse(connected_snapshot["bpm_ready"])
             self.assertEqual(connected_snapshot["device_name"], "Decathlon HRM")
 
             hrm.update_bpm(128)
             bpm_snapshot = hrm.snapshot()
 
-            self.assertTrue(bpm_snapshot["recording_active"])
-            self.assertFalse(bpm_snapshot["start_pending"])
+            self.assertFalse(bpm_snapshot["recording_active"])
+            self.assertTrue(bpm_snapshot["bpm_ready"])
             self.assertEqual(bpm_snapshot["bpm"], 128)
+
+            active_session = hrm.start_recording()
+            recording_snapshot = hrm.snapshot()
+
+            self.assertTrue(recording_snapshot["recording_active"])
+            self.assertEqual(recording_snapshot["bpm"], 128)
+            self.assertGreaterEqual(active_session["sample_count"], 1)
+
+    def test_stale_bpm_is_not_ready_for_recording_start(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hrm = HrmApplication()
+            hrm.recorder = SessionRecorder(Path(tmp))
+
+            hrm.set_ble_connected(True, "Baglandi", "Decathlon HRM", "AA:BB")
+            hrm.update_bpm(118)
+            hrm.state.bpm_updated_at = time.monotonic() - 30
+
+            snapshot = hrm.snapshot()
+
+            self.assertIsNone(snapshot["bpm"])
+            self.assertFalse(snapshot["bpm_ready"])
 
     def test_active_recording_keeps_stale_bpm_visible_during_reconnect(self):
         with tempfile.TemporaryDirectory() as tmp:

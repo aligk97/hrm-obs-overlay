@@ -12,7 +12,8 @@ const sessionList = $("#sessionList");
 const reportEmpty = $("#reportEmpty");
 const reportContent = $("#reportContent");
 const recordingWarning = $("#recordingWarning");
-const startButton = $("#connectButton");
+const connectDeviceButton = $("#connectDeviceButton");
+const startButton = $("#startButton");
 const stopButton = $("#disconnectButton");
 const history = [];
 const maxHistory = 90;
@@ -203,25 +204,26 @@ function renderState(state) {
     rememberDevice(state.device_address, state.device_name, { connected: true });
   }
 
-  const startPending = Boolean(state.start_pending);
   activeRecording = Boolean(state.recording_active);
+  const bpmReady = Boolean(state.bpm_ready);
   recordingWarning.hidden = !activeRecording;
-  startButton.disabled = Boolean(
-    state.connecting || startPending || activeRecording || !hasSelectableDevice()
+  connectDeviceButton.disabled = Boolean(
+    state.connecting || state.connected || state.demo || activeRecording || !hasSelectableDevice()
   );
+  startButton.disabled = Boolean(!bpmReady || activeRecording || state.connecting);
   stopButton.disabled =
-    !activeRecording && !state.connected && !state.connecting && !state.demo && !startPending;
+    !activeRecording && !state.connected && !state.connecting && !state.demo;
 
   connectionPill.classList.toggle("connected", Boolean(state.connected));
-  connectionPill.classList.toggle("connecting", Boolean(state.connecting || startPending));
+  connectionPill.classList.toggle("connecting", Boolean(state.connecting));
   connectionText.textContent = state.demo
     ? "Demo"
     : state.connected
       ? "Bağlı"
-      : state.connecting || startPending
+      : state.connecting
         ? activeRecording
           ? "Yeniden bağlanıyor"
-          : "Bağlantı bekleniyor"
+          : "Bağlanıyor"
         : activeRecording
           ? "Kayıt açık"
           : "Hazır";
@@ -287,7 +289,10 @@ async function scanDevices() {
     const option = new Option("Cihaz bulunamadı", "");
     deviceSelect.add(option);
     updateDevicePreview();
-    if (!activeRecording) startButton.disabled = true;
+    if (!activeRecording) {
+      connectDeviceButton.disabled = true;
+      startButton.disabled = true;
+    }
     if (data.warning) setError(`Tarama uyarısı: ${data.warning}`);
     statusText.textContent = "Cihaz bulunamadı";
     return;
@@ -303,7 +308,7 @@ async function scanDevices() {
   const selected = data.devices.find((device) => device.address === deviceSelect.value) || data.devices[0];
   if (selected) knownDevice = { ...selected, name: deviceDisplayName(selected) };
   updateDevicePreview();
-  if (!activeRecording) startButton.disabled = !hasSelectableDevice();
+  if (!activeRecording) connectDeviceButton.disabled = !hasSelectableDevice();
 
   if (data.warning) {
     setError(`Tarama uyarısı: ${data.warning}`);
@@ -564,7 +569,25 @@ deviceSelect.addEventListener("change", () => {
     knownDevice = null;
   }
   updateDevicePreview();
-  if (!activeRecording) startButton.disabled = !hasSelectableDevice();
+  if (!activeRecording) connectDeviceButton.disabled = !hasSelectableDevice();
+});
+
+connectDeviceButton.addEventListener("click", async () => {
+  try {
+    connectDeviceButton.disabled = true;
+    await request("/api/settings", {
+      method: "POST",
+      body: JSON.stringify(readSettingsForm()),
+    });
+    await request("/api/connect", {
+      method: "POST",
+      body: JSON.stringify(selectedDevice()),
+    });
+    statusText.textContent = "Cihaza bağlanılıyor. Nabız verisi bekleniyor.";
+  } catch (error) {
+    connectDeviceButton.disabled = false;
+    setError(error.message);
+  }
 });
 
 startButton.addEventListener("click", async () => {
@@ -574,13 +597,8 @@ startButton.addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify(readSettingsForm()),
     });
-    const data = await request("/api/connect", {
-      method: "POST",
-      body: JSON.stringify(selectedDevice()),
-    });
-    statusText.textContent = data.recording_pending
-      ? "Bluetooth bağlantısı deneniyor. Kayıt bağlantıdan sonra başlayacak."
-      : "Kayıt başladı";
+    await request("/api/recording/start", { method: "POST", body: "{}" });
+    statusText.textContent = "Kayıt başladı";
     await loadSessions({ refreshSelected: true });
   } catch (error) {
     startButton.disabled = false;

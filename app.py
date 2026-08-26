@@ -122,7 +122,6 @@ class RuntimeState:
     bpm_updated_at: float = 0.0
     connected: bool = False
     connecting: bool = False
-    start_pending: bool = False
     demo: bool = False
     device_name: str = ""
     device_address: str = ""
@@ -664,34 +663,28 @@ class HrmApplication:
             self.state.session_started_at = now
             self.state.stopped_elapsed_seconds = 0.0
             self.state.last_integrated_at = now
-            self.state.start_pending = False
             self.state.status = status
             self.state.error = ""
             self.recorder.start_new(self.settings)
+            if self.state.bpm is not None:
+                kcal_per_minute = estimate_kcal_per_minute(self.state.bpm, self.settings)
+                self.state.kcal_per_hour = kcal_per_minute * 60.0
+                self.recorder.record_sample(
+                    bpm=self.state.bpm,
+                    elapsed_seconds=0.0,
+                    calories=self.state.calories,
+                    kcal_per_hour=self.state.kcal_per_hour,
+                    zone=heart_zone(self.state.bpm, self.settings.age),
+                    force_flush=True,
+                )
         return summarize_session(self.recorder.current) if self.recorder.current else {}
 
     def start_recording(self, status: str = "Kayıt başladı") -> dict[str, Any]:
         with self.lock:
             return self._start_recording_locked(status)
 
-    def prepare_recording_after_connection(self) -> tuple[dict[str, Any], bool]:
-        with self.lock:
-            self._integrate_locked()
-            if self.recorder.is_active():
-                return summarize_session(self.recorder.current) if self.recorder.current else {}, False
-
-            self.state.start_pending = True
-            self.state.status = (
-                "Nabız verisi bekleniyor"
-                if self.state.connected or self.state.demo
-                else "Bluetooth bağlantısı bekleniyor"
-            )
-            self.state.error = ""
-            return {}, not (self.state.connected or self.state.demo)
-
     def stop_recording(self, status: str = "Kayıt durduruldu") -> None:
         with self.lock:
-            self.state.start_pending = False
             if not self.recorder.is_active():
                 self.state.status = status if status != "Kayıt durduruldu" else "Aktif kayıt yok"
                 return
@@ -783,9 +776,6 @@ class HrmApplication:
     def set_ble_connected(self, connected: bool, status: str, name: str = "", address: str = "") -> None:
         with self.lock:
             self._integrate_locked()
-            should_start_recording = (
-                connected and self.state.start_pending and not self.recorder.is_active()
-            )
             self.state.connected = connected
             self.state.connecting = False
             self.state.status = status
@@ -796,8 +786,6 @@ class HrmApplication:
             if not connected and not self.state.demo and not self.recorder.is_active():
                 self.state.bpm = None
             self.state.error = ""
-            if should_start_recording:
-                self.state.status = "Nabız verisi bekleniyor"
 
     def update_bpm(
         self,
@@ -818,9 +806,9 @@ class HrmApplication:
                 self.state.device_name = device_name
             if device_address:
                 self.state.device_address = device_address
-            if self.state.start_pending and not self.recorder.is_active():
-                self._start_recording_locked("Nabız alındı, kayıt başladı")
-            if not self.state.status or self.state.status.startswith("Baglanti"):
+            if not self.state.status or self.state.status.startswith(
+                ("Baglanti", "Baglandi", "Bluetooth", "Nabız verisi")
+            ):
                 self.state.status = "Nabiz okunuyor"
             elapsed_seconds = time.monotonic() - self.state.session_started_at
             zone = heart_zone(bpm, self.settings.age)
@@ -854,6 +842,7 @@ class HrmApplication:
             bpm_fresh = self.state.bpm is not None and (now - self.state.bpm_updated_at) <= 12.0
             recording_active = self.recorder.is_active()
             visible_bpm = self.state.bpm if bpm_fresh or recording_active else None
+            bpm_ready = bool(visible_bpm is not None and (self.state.connected or self.state.demo))
             elapsed_seconds = (
                 now - self.state.session_started_at
                 if recording_active
@@ -864,6 +853,7 @@ class HrmApplication:
                 "settings": asdict(self.settings),
                 "bpm": visible_bpm,
                 "last_bpm": self.state.bpm,
+                "bpm_ready": bpm_ready,
                 "bpm_stale": bool(visible_bpm is not None and not bpm_fresh),
                 "bpm_age_seconds": round(now - self.state.bpm_updated_at, 1)
                 if self.state.bpm_updated_at
@@ -876,7 +866,6 @@ class HrmApplication:
                 "elapsed": format_seconds(elapsed_seconds),
                 "connected": self.state.connected,
                 "connecting": self.state.connecting,
-                "start_pending": self.state.start_pending,
                 "demo": self.state.demo,
                 "device_name": self.state.device_name or self.settings.device_name,
                 "device_address": self.state.device_address or self.settings.device_address,
@@ -1232,19 +1221,21 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/connect":
             self.server.app.demo.stop()
-            address = str(payload.get("address") or self.server.app.settings.device_address or "").strip()
-            name = str(payload.get("name") or self.server.app.settings.device_name or "").strip()
-            if address or name:
-                self.server.app.update_settings({"device_address": address, "device_name": name})
-            active_session, should_connect = self.server.app.prepare_recording_after_connection()
-            if should_connect:
-                self.server.app.ble.connect_background(address, name)
+            address = str(payload.get("address") or "").strip()
+            name = str(payload.get("name") or "").strip()
+            if not address:
+                self._send_json({"error": "Once listeden cihaz secin"}, code=400)
+                return
+            settings_update = {"device_address": address}
+            if name:
+                settings_update["device_name"] = name
+            self.server.app.update_settings(settings_update)
+            self.server.app.ble.connect_background(address, name)
             self._send_json(
                 {
                     "ok": True,
                     "status": "Bluetooth baglantisi baslatildi",
-                    "recording_pending": should_connect,
-                    "active_session": active_session,
+                    "recording_active": self.server.app.recorder.is_active(),
                 }
             )
             return
@@ -1262,7 +1253,10 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/recording/start":
             with self.server.app.lock:
-                bpm_ready = self.server.app.state.bpm is not None
+                bpm_ready = (
+                    self.server.app.state.bpm is not None
+                    and (time.monotonic() - self.server.app.state.bpm_updated_at) <= 12.0
+                )
                 source_ready = self.server.app.state.connected or self.server.app.state.demo
             if not (source_ready and bpm_ready):
                 self._send_json(
@@ -1291,7 +1285,6 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
             enabled = bool(payload.get("enabled"))
             if enabled:
                 self.server.app.ble.disconnect()
-                self.server.app.start_recording()
                 self.server.app.demo.start()
             else:
                 self.server.app.demo.stop()

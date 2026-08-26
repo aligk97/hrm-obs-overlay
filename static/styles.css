@@ -259,6 +259,13 @@ button.primary {
   font-weight: 700;
 }
 
+button.connect-action {
+  background: rgba(70, 211, 141, 0.14);
+  border-color: rgba(70, 211, 141, 0.42);
+  color: #c9f7dc;
+  font-weight: 800;
+}
+
 button.danger {
   background: rgba(218, 65, 65, 0.18);
   border-color: rgba(218, 65, 65, 0.52);
@@ -273,7 +280,7 @@ button:disabled {
 
 .button-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   margin: 14px 0;
 }
