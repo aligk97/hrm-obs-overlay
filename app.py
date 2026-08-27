@@ -1013,12 +1013,38 @@ class BleController:
     def _should_retry(self, retry_on_failure: bool) -> bool:
         return retry_on_failure or self.app.should_retry_ble_connection()
 
-    def _client_kwargs(self) -> dict[str, Any]:
-        return {
-            "timeout": 20.0,
-            "services": [HR_SERVICE_UUID],
-            "winrt": {"use_cached_services": False},
-        }
+    def _client_kwargs(
+        self,
+        *,
+        use_cached_services: bool | None = None,
+        restrict_services: bool = True,
+        timeout: float = 20.0,
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"timeout": timeout}
+        if restrict_services:
+            kwargs["services"] = [HR_SERVICE_UUID]
+        if use_cached_services is not None:
+            kwargs["winrt"] = {"use_cached_services": use_cached_services}
+        return kwargs
+
+    def _connection_attempts(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "label": "Standart BLE baglantisi",
+                "refresh_device": False,
+                "kwargs": self._client_kwargs(),
+            },
+            {
+                "label": "Windows GATT onbellegi",
+                "refresh_device": False,
+                "kwargs": self._client_kwargs(use_cached_services=True),
+            },
+            {
+                "label": "Yeniden tarama + BLEDevice",
+                "refresh_device": True,
+                "kwargs": self._client_kwargs(restrict_services=False, timeout=30.0),
+            },
+        ]
 
     def _is_current(self, stop_flag: threading.Event) -> bool:
         with self._control_lock:
@@ -1143,6 +1169,35 @@ class BleController:
 
         return address, {"name": name or address, "address": address}
 
+    async def _refresh_known_device(self, address: str, name: str) -> tuple[Any, dict[str, Any]]:
+        if not address:
+            return await self._find_hrm_device()
+
+        devices = await self._scan(6.0)
+        wanted = address.lower()
+        match = next(
+            (
+                device
+                for device in devices
+                if str(device.get("address", "")).lower() == wanted
+            ),
+            None,
+        )
+        if match is None:
+            raise RuntimeError(
+                "Secili kemer yeniden taramada bulunamadi. Kemeri takili ve uyanik tutun."
+            )
+
+        fresh_address = str(match.get("address") or address)
+        target = self.scan_cache.get(fresh_address)
+        if target is None:
+            raise RuntimeError("Kemer taramada gorundu ancak BLEDevice nesnesi alinamadi.")
+
+        return target, {
+            "name": str(match.get("name") or name or getattr(target, "name", None) or address),
+            "address": fresh_address,
+        }
+
     async def _connect_loop(
         self,
         address: str,
@@ -1164,10 +1219,11 @@ class BleController:
             try:
                 self.app.set_ble_connecting(
                     True,
-                    "Nabiz kemeri araniyor" if not address else "Seçili cihaza bağlanılıyor",
+                    "Nabiz kemeri araniyor" if not address else "Secili cihaza baglaniliyor",
                 )
                 if self._discard_if_stale(stop_flag):
                     break
+
                 if address:
                     target, info = await self._resolve_known_device(address, name)
                 else:
@@ -1176,14 +1232,55 @@ class BleController:
                 if self._discard_if_stale(stop_flag):
                     break
 
-                client = None
-                try:
-                    async with BleakClient(target, **self._client_kwargs()) as client:
+                attempt_errors: list[str] = []
+                session_connected = False
+
+                for attempt_no, attempt in enumerate(self._connection_attempts(), start=1):
+                    if self._discard_if_stale(stop_flag):
+                        break
+
+                    label = str(attempt["label"])
+                    self.app.set_ble_connecting(
+                        True,
+                        f"Baglanti deneniyor ({attempt_no}/3): {label}",
+                    )
+
+                    attempt_target = target
+                    attempt_info = info
+                    if bool(attempt.get("refresh_device")):
+                        try:
+                            attempt_target, attempt_info = await self._refresh_known_device(
+                                address or str(info.get("address") or ""),
+                                name or str(info.get("name") or ""),
+                            )
+                            target, info = attempt_target, attempt_info
+                        except Exception as exc:
+                            attempt_errors.append(f"{label}: {exc}")
+                            print(f"[BLE] {label} basarisiz: {exc}", file=sys.stderr)
+                            continue
+
+                    client = None
+                    try:
+                        client = BleakClient(attempt_target, **dict(attempt["kwargs"]))
                         self.client = client
-                        device_name = str(info.get("name") or name or address or "HRM")
-                        device_address = str(info.get("address") or address)
-                        self.app.set_ble_connected(True, "Baglandi", device_name, device_address)
+                        await client.connect()
+
+                        if self._discard_if_stale(stop_flag):
+                            break
+
                         await client.start_notify(HR_CHAR_UUID, self._handle_hr_notification)
+
+                        device_name = str(
+                            attempt_info.get("name") or name or address or "HRM"
+                        )
+                        device_address = str(attempt_info.get("address") or address)
+                        self.app.set_ble_connected(
+                            True,
+                            f"Baglandi ({label})",
+                            device_name,
+                            device_address,
+                        )
+                        session_connected = True
 
                         while not stop_flag.is_set() and getattr(client, "is_connected", False):
                             await asyncio.sleep(1.0)
@@ -1192,9 +1289,27 @@ class BleController:
                             await client.stop_notify(HR_CHAR_UUID)
                         except Exception:
                             pass
-                finally:
-                    if client is not None:
-                        self._clear_client(client)
+                        break
+                    except Exception as exc:
+                        attempt_errors.append(f"{label}: {exc}")
+                        print(f"[BLE] {label} basarisiz: {exc}", file=sys.stderr)
+                    finally:
+                        if client is not None:
+                            try:
+                                if getattr(client, "is_connected", False):
+                                    await client.disconnect()
+                            except Exception:
+                                pass
+                            self._clear_client(client)
+
+                if self._discard_if_stale(stop_flag):
+                    break
+
+                if not session_connected:
+                    details = " | ".join(attempt_errors[-3:])
+                    raise RuntimeError(
+                        "Tum BLE baglanti yontemleri basarisiz oldu. " + details
+                    )
 
                 if not stop_flag.is_set():
                     if not self._should_retry(retry_on_failure):

@@ -83,6 +83,20 @@ class HeartRateMeasurementTests(unittest.TestCase):
         self.assertIn("Windows BLE", message)
         self.assertIn("Bluetooth ayarlarindan kemeri kaldirin", message)
 
+    def test_ble_connection_attempts_use_progressive_fallbacks(self):
+        hrm = HrmApplication()
+        attempts = hrm.ble._connection_attempts()
+
+        self.assertEqual(len(attempts), 3)
+        self.assertNotIn("winrt", attempts[0]["kwargs"])
+        self.assertEqual(
+            attempts[1]["kwargs"]["winrt"],
+            {"use_cached_services": True},
+        )
+        self.assertTrue(attempts[2]["refresh_device"])
+        self.assertNotIn("services", attempts[2]["kwargs"])
+        self.assertEqual(attempts[2]["kwargs"]["timeout"], 30.0)
+
     def test_session_summary_counts_zone_durations(self):
         session = {
             "id": "20260825-120000",
