@@ -12,6 +12,7 @@ const sessionList = $("#sessionList");
 const reportEmpty = $("#reportEmpty");
 const reportContent = $("#reportContent");
 const recordingWarning = $("#recordingWarning");
+const profileStatus = $("#profileStatus");
 const devicePanel = $("#devicePanel");
 const deviceScanOverlay = $("#deviceScanOverlay");
 const scanButton = $("#scanButton");
@@ -79,7 +80,12 @@ function request(path, options = {}) {
 function fillSettings(settings) {
   for (const [key, value] of Object.entries(settings)) {
     const field = form.elements[key];
-    if (field) field.value = value;
+    if (!field) continue;
+    if ((key === "max_hr" || key === "resting_hr") && Number(value || 0) <= 0) {
+      field.value = "";
+    } else {
+      field.value = value;
+    }
   }
 }
 
@@ -90,7 +96,24 @@ function readSettingsForm() {
     weight_kg: form.elements.weight_kg.value,
     age: form.elements.age.value,
     sex: form.elements.sex.value,
+    resting_hr: form.elements.resting_hr.value,
+    max_hr: form.elements.max_hr.value,
+    activity_type: form.elements.activity_type.value,
+    fitness_level: form.elements.fitness_level.value,
+    profile_confirmed: true,
   };
+}
+
+function renderProfileStatus(stateOrResponse = latestState) {
+  const complete = Boolean(stateOrResponse?.profile_complete);
+  const errors = stateOrResponse?.profile_errors || [];
+  profileStatus.classList.toggle("ready", complete);
+  profileStatus.classList.toggle("missing", !complete);
+  profileStatus.textContent = complete
+    ? "Profil tamamlandı"
+    : errors.length
+      ? `Eksik bilgiler: ${errors.join(", ")}`
+      : "Profil bekleniyor";
 }
 
 function deviceDisplayName(device) {
@@ -191,6 +214,7 @@ function syncDeviceControls(state = latestState) {
   const isConnecting = Boolean(state?.connecting);
   const isConnected = Boolean(state?.connected);
   const isDemo = Boolean(state?.demo);
+  const profileComplete = Boolean(state?.profile_complete);
 
   scanButton.disabled = scanningDevices;
   deviceSelect.disabled = scanningDevices;
@@ -199,7 +223,7 @@ function syncDeviceControls(state = latestState) {
   connectDeviceButton.disabled = Boolean(
     scanningDevices || isConnecting || isConnected || isDemo || activeRecording || !hasSelectableDevice()
   );
-  startButton.disabled = Boolean(scanningDevices || !bpmReady || activeRecording || isConnecting);
+  startButton.disabled = Boolean(scanningDevices || !profileComplete || !bpmReady || activeRecording || isConnecting);
   stopButton.disabled = Boolean(
     scanningDevices || (!activeRecording && !isConnected && !isConnecting && !isDemo)
   );
@@ -235,6 +259,7 @@ function renderState(state) {
     fillSettings(state.settings);
     settingsHydrated = true;
   }
+  renderProfileStatus(state);
   if (state.connected || state.demo) {
     rememberDevice(state.device_address, state.device_name, { connected: true });
   }
@@ -575,7 +600,8 @@ form.addEventListener("submit", async (event) => {
       body: JSON.stringify(readSettingsForm()),
     });
     fillSettings(data.settings);
-    statusText.textContent = "Ayarlar kaydedildi";
+    renderProfileStatus(data);
+    statusText.textContent = data.profile_complete ? "Ayarlar kaydedildi" : "Profil bilgileri bekleniyor";
     await loadSessions({ refreshSelected: true });
   } catch (error) {
     setError(error.message);
@@ -608,11 +634,14 @@ deviceSelect.addEventListener("change", () => {
 
 connectDeviceButton.addEventListener("click", async () => {
   try {
+    if (!form.reportValidity()) return;
     connectDeviceButton.disabled = true;
-    await request("/api/settings", {
+    const settingsResponse = await request("/api/settings", {
       method: "POST",
       body: JSON.stringify(readSettingsForm()),
     });
+    fillSettings(settingsResponse.settings);
+    renderProfileStatus(settingsResponse);
     await request("/api/connect", {
       method: "POST",
       body: JSON.stringify(selectedDevice()),
@@ -626,11 +655,14 @@ connectDeviceButton.addEventListener("click", async () => {
 
 startButton.addEventListener("click", async () => {
   try {
+    if (!form.reportValidity()) return;
     startButton.disabled = true;
-    await request("/api/settings", {
+    const settingsResponse = await request("/api/settings", {
       method: "POST",
       body: JSON.stringify(readSettingsForm()),
     });
+    fillSettings(settingsResponse.settings);
+    renderProfileStatus(settingsResponse);
     await request("/api/recording/start", { method: "POST", body: "{}" });
     statusText.textContent = "Kayıt başladı";
     await loadSessions({ refreshSelected: true });

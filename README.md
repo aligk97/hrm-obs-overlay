@@ -6,8 +6,8 @@ Windows 11'de Decathlon Bluetooth/ANT+ nabiz kemerini Bluetooth Low Energy uzeri
 
 - BLE Heart Rate Service (`0x180D`) ve Heart Rate Measurement (`0x2A37`) bildirimi okur.
 - OBS Browser Source icin `http://127.0.0.1:8765/overlay` adresini sunar.
-- Boy, kilo, yas ve cinsiyet ayarlarini kaydeder.
-- Nabiz, sure ve kullanici bilgilerine gore tahmini kalori yakimini canli hesaplar.
+- Boy, kilo, yas, cinsiyet, dinlenik nabiz, aktivite turu ve kondisyon ayarlarini kaydeder.
+- Nabiz, sure ve kullanici bilgilerine gore aktif kalori tahminini canli hesaplar.
 - Nabiz bolgesine gore renk degistirir: dinlenme acik mavi, isinma turkuaz, yag yakimi sari, aerobik turuncu, anaerobik koyu turuncu, maksimum koyu kirmizi.
 - Her yayin icin otomatik kayit tutar ve eski kayitlari rapor olarak gosterir.
 - Kemer yaninizda degilken test etmek icin demo modu vardir.
@@ -35,11 +35,11 @@ py -3.14 -m venv .venv
 ## Kullanım
 
 1. Ayar ekranini acin: `http://127.0.0.1:8765/`
-2. Boy, kilo, yas ve cinsiyet alanlarini doldurup kaydedin.
+2. Boy, kilo, yas, cinsiyet, dinlenik nabiz, aktivite turu ve kondisyon alanlarini doldurup kaydedin. Gercek maksimum nabzinizi bilmiyorsaniz bos birakabilirsiniz.
 3. `Tara` dugmesine basin.
 4. Decathlon/HRM/Heart Rate olarak gorunen cihazi secin.
 5. `Cihaza baglan` dugmesine basin.
-6. Ekranda ilk nabiz degeri gorununce `Baslat` aktiflesir.
+6. Profil tamamlanip ilk nabiz degeri gorununce `Baslat` aktiflesir.
 7. `Baslat` dugmesine basinca kayit, sure ve kalori sayaci baslar.
 
 Demo modu, OBS ekranini kemer olmadan denemek icindir. Demo nabiz uretir; kayit almak icin nabiz gorundukten sonra `Baslat` dugmesine basin.
@@ -47,7 +47,7 @@ Demo modu, OBS ekranini kemer olmadan denemek icindir. Demo nabiz uretir; kayit 
 ## Yayın kayıtları ve raporlar
 
 - `Cihaza baglan` sadece Bluetooth baglantisini kurar ve nabzi ekranda gosterir; kayit baslatmaz.
-- `Baslat` sadece guncel nabiz verisi gelince aktiflesir; bastiginizda yeni yayin kaydi baslar.
+- `Baslat` sadece profil tamamlanmis ve guncel nabiz verisi gelmisken aktiflesir; bastiginizda yeni yayin kaydi baslar.
 - Nabiz verisi geldikce kayit dosyasi otomatik guncellenir.
 - Yayini bitirirken `Durdur` dugmesine basin; baglanti kapanir, kayit tamamlanir ve eski kayitlar listesine duser.
 - Ayar ekranindaki `Yayin kayitlari` bolumunden eski kayitlara tiklayabilirsiniz.
@@ -86,8 +86,9 @@ Height: 820
 ## Notlar
 
 - ANT+ okumasi icin ayri ANT+ USB dongle ve farkli kutuphane gerekir. Bu uygulama Decathlon kemerin Bluetooth Low Energy tarafini kullanir.
-- Kalori hesabi tibbi/laboratuvar hassasiyetinde degildir; yayin ve antrenman takibi icin makul bir tahmindir.
-- Temel nabiz-kalori hesabi Keytel tipi kalp atis hizi denklemini kullanir. Boy bilgisi Mifflin-St Jeor dinlenme yakimi alt sinirina dahil edilir.
+- Kalori hesabi tibbi/laboratuvar hassasiyetinde degildir; yayin ve antrenman takibi icin makul bir aktif kalori tahminidir.
+- Kalori modeli, Mifflin-St Jeor dinlenme enerji ihtiyacini, Tanaka yas tahminli maksimum nabzi, kullanici dinlenik nabzindan hesaplanan nabiz rezervini ve aktivite turune gore MET ust sinirini birlikte kullanir.
+- `Yayın / sim racing` aktivite turu, strese bagli yuksek nabzin kosu veya bisiklet kadar kalori uretmesini engelleyen daha dusuk bir MET tavani kullanir.
 - BLE paketi olarak sadece `bleak` kullanilir. `bleak`, Windows 11 BLE destegi saglar ve PyPI uzerinde Python `>=3.10` ister.
 
 ## Sorun giderme

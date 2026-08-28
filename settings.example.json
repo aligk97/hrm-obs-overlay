@@ -4,6 +4,11 @@
   "weight_kg": 75.0,
   "age": 30,
   "sex": "male",
+  "resting_hr": 0,
+  "max_hr": 0,
+  "activity_type": "",
+  "fitness_level": "",
+  "profile_confirmed": false,
   "device_address": "",
   "device_name": ""
 }

@@ -13,9 +13,33 @@ from app import (
     heart_zone,
     mark_saved_device,
     parse_heart_rate_measurement,
+    profile_validation_errors,
     sanitize_settings,
     summarize_session,
 )
+
+
+def valid_profile(**overrides):
+    data = {
+        "display_name": "Canlı Nabız",
+        "height_cm": 185,
+        "weight_kg": 82,
+        "age": 24,
+        "sex": "male",
+        "resting_hr": 60,
+        "max_hr": "",
+        "activity_type": "mixed",
+        "fitness_level": "average",
+        "profile_confirmed": True,
+    }
+    data.update(overrides)
+    return data
+
+
+def valid_settings(**overrides):
+    data = valid_profile(**overrides)
+    data["max_hr"] = 0 if data["max_hr"] == "" else data["max_hr"]
+    return sanitize_settings(data)
 
 
 class HeartRateMeasurementTests(unittest.TestCase):
@@ -38,10 +62,36 @@ class HeartRateMeasurementTests(unittest.TestCase):
         self.assertEqual(settings.age, 10)
         self.assertEqual(settings.sex, "female")
 
-    def test_calorie_estimate_uses_height_floor(self):
-        short = Settings(height_cm=150, weight_kg=70, age=35, sex="male")
-        tall = Settings(height_cm=200, weight_kg=70, age=35, sex="male")
-        self.assertGreater(estimate_kcal_per_minute(45, tall), estimate_kcal_per_minute(45, short))
+    def test_sanitize_settings_requires_new_profile_fields_until_confirmed(self):
+        settings = sanitize_settings({"height_cm": 185, "weight_kg": 82, "age": 24, "sex": "male"})
+
+        self.assertFalse(settings.profile_confirmed)
+        self.assertIn("Dinlenik nabız", profile_validation_errors(settings, require_confirmed=False))
+        self.assertIn("Aktivite türü", profile_validation_errors(settings, require_confirmed=False))
+
+    def test_sanitize_settings_marks_complete_with_required_profile(self):
+        settings = sanitize_settings(valid_profile(activity_type="broadcast"))
+
+        self.assertTrue(settings.profile_confirmed)
+        self.assertEqual(profile_validation_errors(settings), [])
+        self.assertEqual(settings.resting_hr, 60)
+        self.assertEqual(settings.activity_type, "broadcast")
+
+    def test_calorie_estimate_uses_height_in_personalized_model(self):
+        short = valid_settings(height_cm=150, weight_kg=70, age=35)
+        tall = valid_settings(height_cm=200, weight_kg=70, age=35)
+
+        self.assertGreater(estimate_kcal_per_minute(130, tall), estimate_kcal_per_minute(130, short))
+
+    def test_broadcast_activity_caps_high_heart_rate_calories(self):
+        broadcast = valid_settings(activity_type="broadcast")
+        running = valid_settings(activity_type="running")
+
+        broadcast_kcal_hour = estimate_kcal_per_minute(190, broadcast) * 60
+        running_kcal_hour = estimate_kcal_per_minute(190, running) * 60
+
+        self.assertLess(broadcast_kcal_hour, 430)
+        self.assertGreater(running_kcal_hour, broadcast_kcal_hour)
 
     def test_heart_zones_progress_from_rest_to_maximum(self):
         self.assertEqual(heart_zone(80, 30)["label"], "Dinlenme")
@@ -190,6 +240,7 @@ class HeartRateMeasurementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             hrm = HrmApplication()
             hrm.recorder = SessionRecorder(Path(tmp))
+            hrm.update_settings(valid_profile())
 
             hrm.set_ble_connected(True, "Baglandi", "Decathlon HRM", "AA:BB")
             connected_snapshot = hrm.snapshot()
@@ -216,6 +267,7 @@ class HeartRateMeasurementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             hrm = HrmApplication()
             hrm.recorder = SessionRecorder(Path(tmp))
+            hrm.update_settings(valid_profile())
 
             hrm.set_ble_connected(True, "Baglandi", "Decathlon HRM", "AA:BB")
             hrm.update_bpm(118)
@@ -238,10 +290,20 @@ class HeartRateMeasurementTests(unittest.TestCase):
         self.assertFalse(snapshot["bpm_ready"])
         self.assertEqual(snapshot["status"], "Baglanti hatasi")
 
+    def test_recording_requires_completed_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hrm = HrmApplication()
+            hrm.recorder = SessionRecorder(Path(tmp))
+            hrm.settings = Settings()
+
+            with self.assertRaises(RuntimeError):
+                hrm.start_recording()
+
     def test_active_recording_keeps_stale_bpm_visible_during_reconnect(self):
         with tempfile.TemporaryDirectory() as tmp:
             hrm = HrmApplication()
             hrm.recorder = SessionRecorder(Path(tmp))
+            hrm.update_settings(valid_profile())
             hrm.start_recording()
             hrm.update_bpm(132)
             hrm.state.bpm_updated_at = time.monotonic() - 30

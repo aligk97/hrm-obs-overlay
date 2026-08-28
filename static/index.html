@@ -31,7 +31,7 @@
           <small>seans</small>
         </div>
         <div class="metric">
-          <span class="metric-label">Kalori</span>
+          <span class="metric-label">Aktif kalori</span>
           <strong id="caloriesValue">0.0</strong>
           <small>kcal</small>
         </div>
@@ -57,24 +57,53 @@
           <div class="form-grid">
             <label>
               Boy (cm)
-              <input name="height_cm" type="number" min="90" max="240" step="0.1" />
+              <input name="height_cm" type="number" min="90" max="240" step="0.1" required />
             </label>
             <label>
               Kilo (kg)
-              <input name="weight_kg" type="number" min="25" max="250" step="0.1" />
+              <input name="weight_kg" type="number" min="25" max="250" step="0.1" required />
             </label>
             <label>
               Yaş
-              <input name="age" type="number" min="10" max="100" step="1" />
+              <input name="age" type="number" min="10" max="100" step="1" required />
             </label>
             <label>
               Cinsiyet
-              <select name="sex">
+              <select name="sex" required>
                 <option value="male">Erkek</option>
                 <option value="female">Kadın</option>
               </select>
             </label>
+            <label>
+              Dinlenik nabız
+              <input name="resting_hr" type="number" min="35" max="110" step="1" required />
+            </label>
+            <label>
+              Maksimum nabız
+              <input name="max_hr" type="number" min="90" max="230" step="1" placeholder="Otomatik" />
+            </label>
+            <label>
+              Aktivite türü
+              <select name="activity_type" required>
+                <option value="">Seçin</option>
+                <option value="broadcast">Yayın / sim racing</option>
+                <option value="mixed">Karma antrenman</option>
+                <option value="cycling">Bisiklet</option>
+                <option value="running">Koşu</option>
+                <option value="strength">Ağırlık / kondisyon</option>
+              </select>
+            </label>
+            <label>
+              Kondisyon seviyesi
+              <select name="fitness_level" required>
+                <option value="">Seçin</option>
+                <option value="low">Düşük</option>
+                <option value="average">Orta</option>
+                <option value="high">Yüksek</option>
+              </select>
+            </label>
           </div>
+          <div class="profile-status" id="profileStatus">Profil bekleniyor</div>
         </form>
 
         <section class="panel device-panel" id="devicePanel">
@@ -140,7 +169,7 @@
                     <p id="reportMeta">--</p>
                   </div>
                   <div class="report-kcal">
-                    <span>Kalori</span>
+                    <span>Aktif kalori</span>
                     <strong id="reportCalories">0.0</strong>
                   </div>
                 </div>

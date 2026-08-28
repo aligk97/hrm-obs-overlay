@@ -98,6 +98,56 @@ WAITING_ZONE = {
 }
 
 
+ACTIVITY_PROFILES = {
+    "broadcast": {
+        "label": "Yayın / sim racing",
+        "met_cap": 6.0,
+    },
+    "mixed": {
+        "label": "Karma antrenman",
+        "met_cap": 11.0,
+    },
+    "cycling": {
+        "label": "Bisiklet",
+        "met_cap": 12.0,
+    },
+    "running": {
+        "label": "Koşu",
+        "met_cap": 14.5,
+    },
+    "strength": {
+        "label": "Ağırlık / kondisyon",
+        "met_cap": 8.0,
+    },
+}
+
+FITNESS_LEVELS = {
+    "low": {
+        "label": "Düşük",
+        "vo2_adjustment": -5.0,
+    },
+    "average": {
+        "label": "Orta",
+        "vo2_adjustment": 0.0,
+    },
+    "high": {
+        "label": "Yüksek",
+        "vo2_adjustment": 6.0,
+    },
+}
+
+PROFILE_INPUT_FIELDS = {
+    "height_cm",
+    "weight_kg",
+    "age",
+    "sex",
+    "resting_hr",
+    "max_hr",
+    "activity_type",
+    "fitness_level",
+}
+
+
 @dataclass
 class Settings:
     display_name: str = "Canli Nabiz"
@@ -105,6 +155,11 @@ class Settings:
     weight_kg: float = 75.0
     age: int = 30
     sex: str = "male"
+    resting_hr: int = 0
+    max_hr: int = 0
+    activity_type: str = ""
+    fitness_level: str = ""
+    profile_confirmed: bool = False
     device_address: str = ""
     device_name: str = ""
 
@@ -151,6 +206,43 @@ def _clamp(value: float, low: float, high: float) -> float:
     return min(high, max(low, value))
 
 
+def _is_blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _coerce_profile_float(value: Any, current: float, low: float, high: float) -> float:
+    if value is None:
+        return current
+    if _is_blank(value):
+        return 0.0
+    parsed = _coerce_float(value, math.nan)
+    if not math.isfinite(parsed):
+        return 0.0
+    return round(_clamp(parsed, low, high), 1)
+
+
+def _coerce_profile_int(value: Any, current: int, low: int, high: int) -> int:
+    if value is None:
+        return current
+    if _is_blank(value):
+        return 0
+    parsed = _coerce_int(value, 0)
+    if parsed <= 0:
+        return 0
+    return int(_clamp(parsed, low, high))
+
+
+def _coerce_optional_hr(value: Any, current: int) -> int:
+    if value is None:
+        return current
+    if _is_blank(value):
+        return 0
+    parsed = _coerce_int(value, 0)
+    if parsed <= 0:
+        return 0
+    return int(_clamp(parsed, 90, 230))
+
+
 def sanitize_settings(data: dict[str, Any], current: Settings | None = None) -> Settings:
     base = asdict(current or Settings())
     for key in base:
@@ -164,15 +256,70 @@ def sanitize_settings(data: dict[str, Any], current: Settings | None = None) -> 
     sex = str(base.get("sex") or "male").lower()
     sex = "female" if sex.startswith("f") or sex.startswith("k") else "male"
 
-    return Settings(
+    activity_type = str(base.get("activity_type") or "").strip().lower()
+    if activity_type not in ACTIVITY_PROFILES:
+        activity_type = ""
+
+    fitness_level = str(base.get("fitness_level") or "").strip().lower()
+    if fitness_level not in FITNESS_LEVELS:
+        fitness_level = ""
+
+    previous = current or Settings()
+    submitted_profile = any(key in data for key in PROFILE_INPUT_FIELDS)
+    settings = Settings(
         display_name=display_name,
-        height_cm=round(_clamp(_coerce_float(base.get("height_cm"), 175.0), 90.0, 240.0), 1),
-        weight_kg=round(_clamp(_coerce_float(base.get("weight_kg"), 75.0), 25.0, 250.0), 1),
-        age=int(_clamp(_coerce_int(base.get("age"), 30), 10, 100)),
+        height_cm=_coerce_profile_float(base.get("height_cm"), previous.height_cm, 90.0, 240.0),
+        weight_kg=_coerce_profile_float(base.get("weight_kg"), previous.weight_kg, 25.0, 250.0),
+        age=_coerce_profile_int(base.get("age"), previous.age, 10, 100),
         sex=sex,
+        resting_hr=_coerce_profile_int(base.get("resting_hr"), previous.resting_hr, 35, 110),
+        max_hr=_coerce_optional_hr(base.get("max_hr"), previous.max_hr),
+        activity_type=activity_type,
+        fitness_level=fitness_level,
+        profile_confirmed=bool(base.get("profile_confirmed")),
         device_address=str(base.get("device_address") or "").strip()[:200],
         device_name=str(base.get("device_name") or "").strip()[:80],
     )
+    if submitted_profile:
+        settings.profile_confirmed = not profile_validation_errors(settings, require_confirmed=False)
+    else:
+        settings.profile_confirmed = settings.profile_confirmed and not profile_validation_errors(
+            settings, require_confirmed=False
+        )
+    return settings
+
+
+def profile_validation_errors(settings: Settings, require_confirmed: bool = True) -> list[str]:
+    errors: list[str] = []
+    if not 90.0 <= settings.height_cm <= 240.0:
+        errors.append("Boy")
+    if not 25.0 <= settings.weight_kg <= 250.0:
+        errors.append("Kilo")
+    if not 10 <= settings.age <= 100:
+        errors.append("Yaş")
+    if settings.sex not in ("male", "female"):
+        errors.append("Cinsiyet")
+    if not 35 <= settings.resting_hr <= 110:
+        errors.append("Dinlenik nabız")
+    if settings.max_hr and settings.max_hr <= settings.resting_hr + 20:
+        errors.append("Maksimum nabız dinlenik nabızdan en az 20 bpm yüksek olmalı")
+    if settings.activity_type not in ACTIVITY_PROFILES:
+        errors.append("Aktivite türü")
+    if settings.fitness_level not in FITNESS_LEVELS:
+        errors.append("Kondisyon seviyesi")
+    if require_confirmed and not settings.profile_confirmed:
+        errors.append("Ayarları kaydedip onaylayın")
+    return errors
+
+
+def profile_error_message(errors: list[str]) -> str:
+    if not errors:
+        return ""
+    return "Kalori hesabı başlamadan önce gerekli profil bilgilerini tamamlayın: " + ", ".join(errors)
+
+
+def profile_is_ready(settings: Settings) -> bool:
+    return not profile_validation_errors(settings)
 
 
 def load_settings() -> Settings:
@@ -246,37 +393,61 @@ def bmr_kcal_per_day(settings: Settings) -> float:
     )
 
 
-def keytel_kcal_per_minute(bpm: int, settings: Settings) -> float:
-    if settings.sex == "female":
-        value = (
-            -20.4022
-            + (0.4472 * bpm)
-            - (0.1263 * settings.weight_kg)
-            + (0.074 * settings.age)
-        ) / 4.184
-    else:
-        value = (
-            -55.0969
-            + (0.6309 * bpm)
-            + (0.1988 * settings.weight_kg)
-            + (0.2017 * settings.age)
-        ) / 4.184
-    return max(0.0, value)
+def effective_max_hr(settings: Settings) -> int:
+    predicted = int(round(208.0 - (0.7 * settings.age)))
+    if settings.max_hr:
+        return settings.max_hr
+    return int(_clamp(predicted, settings.resting_hr + 40, 220))
+
+
+def body_mass_index(settings: Settings) -> float:
+    height_m = max(0.9, settings.height_cm / 100.0)
+    return settings.weight_kg / (height_m * height_m)
+
+
+def estimated_vo2max_mlkg_min(settings: Settings) -> float:
+    age = int(_clamp(settings.age, 18, 80))
+    base = 47.0 if settings.sex == "male" else 38.0
+    decline = max(0, age - 20) * (0.28 if settings.sex == "male" else 0.22)
+    fitness_adjustment = FITNESS_LEVELS.get(settings.fitness_level, FITNESS_LEVELS["average"])[
+        "vo2_adjustment"
+    ]
+    bmi_adjustment = _clamp((24.0 - body_mass_index(settings)) * 0.45, -6.0, 3.0)
+    return _clamp(base - decline + fitness_adjustment + bmi_adjustment, 22.0, 58.0)
+
+
+def active_met_from_heart_rate(bpm: int, settings: Settings) -> float:
+    resting_hr = max(35, settings.resting_hr)
+    max_hr = max(resting_hr + 30, effective_max_hr(settings))
+    safe_bpm = _clamp(float(bpm), 35.0, max_hr + 5.0)
+    intensity = _clamp((safe_bpm - resting_hr) / (max_hr - resting_hr), 0.0, 1.05)
+    if intensity <= 0.04:
+        return 0.0
+
+    vo2max = estimated_vo2max_mlkg_min(settings)
+    gross_met = (3.5 + (intensity * max(0.0, vo2max - 3.5))) / 3.5
+    active_met = max(0.0, gross_met - 1.0)
+    if intensity < 0.12:
+        active_met *= intensity / 0.12
+
+    activity = ACTIVITY_PROFILES.get(settings.activity_type, ACTIVITY_PROFILES["mixed"])
+    active_met_cap = max(0.0, float(activity["met_cap"]) - 1.0)
+    return min(active_met, active_met_cap)
 
 
 def estimate_kcal_per_minute(bpm: int | None, settings: Settings) -> float:
-    if bpm is None or bpm < 35:
+    if bpm is None or bpm < 35 or not profile_is_ready(settings):
         return 0.0
-    resting_floor = bmr_kcal_per_day(settings) / 1440.0
-    return max(resting_floor, keytel_kcal_per_minute(bpm, settings))
+    resting_kcal_per_minute = bmr_kcal_per_day(settings) / 1440.0
+    return active_met_from_heart_rate(bpm, settings) * resting_kcal_per_minute
 
 
-def heart_zone(bpm: int | None, age: int) -> dict[str, Any]:
+def heart_zone(bpm: int | None, age: int, max_hr: int = 0) -> dict[str, Any]:
     if bpm is None:
         return dict(WAITING_ZONE)
 
-    max_hr = max(100.0, 208.0 - (0.7 * age))
-    pct = _clamp((bpm / max_hr) * 100.0, 0.0, 120.0)
+    hr_max = max(100.0, float(max_hr or (208.0 - (0.7 * age))))
+    pct = _clamp((bpm / hr_max) * 100.0, 0.0, 120.0)
     selected = HEART_ZONE_DEFS[-1]
     for zone in HEART_ZONE_DEFS:
         if pct < zone["max_pct"]:
@@ -301,6 +472,10 @@ def recording_settings(settings: Settings) -> dict[str, Any]:
         "weight_kg": settings.weight_kg,
         "age": settings.age,
         "sex": settings.sex,
+        "resting_hr": settings.resting_hr,
+        "max_hr": settings.max_hr,
+        "activity_type": settings.activity_type,
+        "fitness_level": settings.fitness_level,
     }
 
 
@@ -671,7 +846,18 @@ class HrmApplication:
         self.ble.disconnect()
         self.stop_recording("Kayıt kapatıldı")
 
+    def profile_errors(self, require_confirmed: bool = True) -> list[str]:
+        with self.lock:
+            return profile_validation_errors(self.settings, require_confirmed=require_confirmed)
+
+    def profile_ready(self) -> bool:
+        return not self.profile_errors()
+
     def _start_recording_locked(self, status: str = "Kayıt başladı") -> dict[str, Any]:
+        errors = profile_validation_errors(self.settings)
+        if errors:
+            raise RuntimeError(profile_error_message(errors))
+
         self._integrate_locked()
         if not self.recorder.is_active():
             now = time.monotonic()
@@ -691,7 +877,7 @@ class HrmApplication:
                     elapsed_seconds=0.0,
                     calories=self.state.calories,
                     kcal_per_hour=self.state.kcal_per_hour,
-                    zone=heart_zone(self.state.bpm, self.settings.age),
+                    zone=heart_zone(self.state.bpm, self.settings.age, self.settings.max_hr),
                     force_flush=True,
                 )
         return summarize_session(self.recorder.current) if self.recorder.current else {}
@@ -746,7 +932,12 @@ class HrmApplication:
     def update_settings(self, data: dict[str, Any]) -> Settings:
         with self.lock:
             self._integrate_locked()
-            self.settings = sanitize_settings(data, self.settings)
+            next_settings = sanitize_settings(data, self.settings)
+            submitted_profile = any(key in data for key in PROFILE_INPUT_FIELDS)
+            errors = profile_validation_errors(next_settings, require_confirmed=False)
+            if submitted_profile and errors:
+                raise ValueError(profile_error_message(errors))
+            self.settings = next_settings
             save_settings(self.settings)
             self.recorder.update_settings(self.settings)
             if self.settings.device_name:
@@ -843,7 +1034,7 @@ class HrmApplication:
             ):
                 self.state.status = "Nabiz okunuyor"
             elapsed_seconds = time.monotonic() - self.state.session_started_at
-            zone = heart_zone(bpm, self.settings.age)
+            zone = heart_zone(bpm, self.settings.age, self.settings.max_hr)
             self.recorder.record_sample(
                 bpm=bpm,
                 elapsed_seconds=elapsed_seconds,
@@ -880,9 +1071,25 @@ class HrmApplication:
                 if recording_active
                 else self.state.stopped_elapsed_seconds
             )
-            zone = heart_zone(visible_bpm, self.settings.age)
+            zone = heart_zone(visible_bpm, self.settings.age, self.settings.max_hr)
+            profile_errors = profile_validation_errors(self.settings)
+            effective_hr_max = effective_max_hr(self.settings) if not profile_errors else None
             return {
                 "settings": asdict(self.settings),
+                "profile_complete": not profile_errors,
+                "profile_errors": profile_errors,
+                "calorie_model": {
+                    "activity_type": self.settings.activity_type,
+                    "fitness_level": self.settings.fitness_level,
+                    "resting_hr": self.settings.resting_hr or None,
+                    "max_hr": self.settings.max_hr or effective_hr_max,
+                    "estimated_vo2max": round(estimated_vo2max_mlkg_min(self.settings), 1)
+                    if not profile_errors
+                    else None,
+                    "activity_met_cap": ACTIVITY_PROFILES.get(
+                        self.settings.activity_type, ACTIVITY_PROFILES["mixed"]
+                    )["met_cap"],
+                },
                 "bpm": visible_bpm,
                 "last_bpm": self.state.bpm,
                 "bpm_ready": bpm_ready,
@@ -1444,8 +1651,19 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/settings":
-            settings = self.server.app.update_settings(payload)
-            self._send_json({"settings": asdict(settings)})
+            try:
+                settings = self.server.app.update_settings(payload)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, code=400)
+                return
+            errors = self.server.app.profile_errors()
+            self._send_json(
+                {
+                    "settings": asdict(settings),
+                    "profile_complete": not errors,
+                    "profile_errors": errors,
+                }
+            )
             return
         if path == "/api/connect":
             self.server.app.demo.stop()
@@ -1480,6 +1698,13 @@ class HrmRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if path == "/api/recording/start":
+            profile_errors = self.server.app.profile_errors()
+            if profile_errors:
+                self._send_json(
+                    {"error": profile_error_message(profile_errors), "profile_errors": profile_errors},
+                    code=409,
+                )
+                return
             with self.server.app.lock:
                 bpm_ready = (
                     self.server.app.state.bpm is not None
